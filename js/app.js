@@ -80,6 +80,10 @@ function renderNav() {
     menuItems.push({ key: 'list', label: '公文列表', icon: '📋' });
     menuItems.push({ key: 'supervision', label: '督办预警中心', icon: '⚠️' });
 
+    if (currentRole === ROLES.OFFICE || currentRole === ROLES.LEADER) {
+        menuItems.push({ key: 'statistics', label: '公文统计分析', icon: '📊' });
+    }
+
     if (currentRole === ROLES.OFFICE) {
         menuItems.push({ key: 'register', label: '收文登记', icon: '✍️' });
         menuItems.push({ key: 'batchImport', label: '批量收文导入', icon: '📥' });
@@ -116,7 +120,13 @@ function navigateTo(page, params = {}) {
             renderDashboard();
             break;
         case 'list':
+            if (params.filters) {
+                currentFilters = { ...params.filters };
+            }
             renderDocList();
+            break;
+        case 'statistics':
+            renderStatistics();
             break;
         case 'supervision':
             renderSupervisionCenter();
@@ -416,6 +426,33 @@ function renderDocList() {
         { value: 'multi', label: '多科室协办' }
     ];
 
+    const priorityOptions = [
+        { value: '', label: '全部紧急程度' },
+        { value: 'normal', label: '普通' },
+        { value: 'high', label: '加急' },
+        { value: 'urgent', label: '特急' }
+    ];
+
+    const categoryOptions = [
+        { value: '', label: '全部类别' },
+        { value: '通知', label: '通知' },
+        { value: '请示', label: '请示' },
+        { value: '报告', label: '报告' },
+        { value: '批复', label: '批复' },
+        { value: '函', label: '函' },
+        { value: '会议纪要', label: '会议纪要' },
+        { value: '意见', label: '意见' },
+        { value: '其他', label: '其他' },
+        { value: '__none__', label: '未分类' }
+    ];
+
+    const kw = currentFilters.keyword || '';
+    const status = currentFilters.status || '';
+    const mode = currentFilters.isMultiDept === true ? 'multi' : (currentFilters.isMultiDept === false ? 'single' : '');
+    const dept = currentFilters.assignedDept || '';
+    const priority = currentFilters.priority || '';
+    const category = currentFilters.category || '';
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">公文列表</h2>
@@ -424,26 +461,47 @@ function renderDocList() {
 
         <div class="card">
             <div class="card-body">
-                <div class="search-bar">
+                <div class="search-bar list-search-bar">
                     <div class="form-group">
                         <label class="form-label">关键词</label>
                         <input type="text" class="form-input" id="searchKeyword" placeholder="文号、标题、来文单位"
+                               value="${kw}"
                                onkeyup="if(event.key==='Enter') applyFilters()">
                     </div>
                     <div class="form-group">
                         <label class="form-label">状态</label>
                         <select class="form-select" id="searchStatus" onchange="applyFilters()">
-                            ${statusOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                            ${statusOptions.map(o => `<option value="${o.value}" ${o.value === status ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">承办科室</label>
+                        <select class="form-select" id="searchDept" onchange="applyFilters()">
+                            ${deptOptions.map(o => `<option value="${o.value}" ${o.value === dept ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">紧急程度</label>
+                        <select class="form-select" id="searchPriority" onchange="applyFilters()">
+                            ${priorityOptions.map(o => `<option value="${o.value}" ${o.value === priority ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">公文类别</label>
+                        <select class="form-select" id="searchCategory" onchange="applyFilters()">
+                            ${categoryOptions.map(o => `<option value="${o.value}" ${o.value === category ? 'selected' : ''}>${o.label}</option>`).join('')}
                         </select>
                     </div>
                     <div class="form-group">
                         <label class="form-label">办理方式</label>
                         <select class="form-select" id="searchMode" onchange="applyFilters()">
-                            ${modeOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                            ${modeOptions.map(o => `<option value="${o.value}" ${o.value === mode ? 'selected' : ''}>${o.label}</option>`).join('')}
                         </select>
                     </div>
-                    <button class="btn btn-primary" onclick="applyFilters()">🔍 查询</button>
-                    <button class="btn btn-default" onclick="resetFilters()">重置</button>
+                    <div class="search-actions">
+                        <button class="btn btn-primary" onclick="applyFilters()">🔍 查询</button>
+                        <button class="btn btn-default" onclick="resetFilters()">重置</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -468,6 +526,9 @@ function applyFilters() {
     currentFilters = {
         keyword: document.getElementById('searchKeyword').value.trim(),
         status: document.getElementById('searchStatus').value,
+        assignedDept: document.getElementById('searchDept').value,
+        priority: document.getElementById('searchPriority').value,
+        category: document.getElementById('searchCategory').value,
         isMultiDept: isMultiDept
     };
     document.getElementById('docListTable').innerHTML = renderDocTable();
@@ -477,6 +538,9 @@ function resetFilters() {
     currentFilters = {};
     document.getElementById('searchKeyword').value = '';
     document.getElementById('searchStatus').value = '';
+    document.getElementById('searchDept').value = '';
+    document.getElementById('searchPriority').value = '';
+    document.getElementById('searchCategory').value = '';
     document.getElementById('searchMode').value = '';
     document.getElementById('docListTable').innerHTML = renderDocTable();
 }
@@ -545,6 +609,210 @@ function renderDocTable() {
             </table>
         </div>
     `;
+}
+
+function renderStatistics() {
+    const content = document.getElementById('contentArea');
+    const stats = dataStore.getAnalyticsStats();
+
+    const statusItems = Object.entries(stats.statusDistribution).map(([key, count]) => ({
+        key,
+        label: getStatusLabelByNode(key),
+        count
+    }));
+
+    const deptItems = Object.entries(stats.deptDistribution)
+        .filter(([_, count]) => count > 0)
+        .map(([key, count]) => ({ key, label: key, count }))
+        .sort((a, b) => b.count - a.count);
+
+    const priorityItems = Object.entries(stats.priorityDistribution).map(([key, count]) => ({
+        key,
+        label: PRIORITY_LABELS[key] || key,
+        count
+    }));
+
+    const categoryItems = Object.entries(stats.categoryDistribution)
+        .filter(([_, count]) => count > 0)
+        .map(([key, count]) => ({ key, label: key, count }))
+        .sort((a, b) => b.count - a.count);
+
+    const maxDeptCount = Math.max(...deptItems.map(d => d.count), 1);
+    const maxCategoryCount = Math.max(...categoryItems.map(d => d.count), 1);
+    const maxDayCount = Math.max(...stats.last30Days.map(d => d.count), 1);
+
+    const statusColors = {
+        [FLOW_NODES.REGISTER]: '#91d5ff',
+        [FLOW_NODES.PROPOSE]: '#ffd591',
+        [FLOW_NODES.ASSIGN]: '#ffc069',
+        [FLOW_NODES.HANDLE]: '#ffa940',
+        [FLOW_NODES.FEEDBACK]: '#ffa39e',
+        [FLOW_NODES.COMPLETE]: '#b7eb8f'
+    };
+
+    const priorityColors = {
+        'normal': '#52c41a',
+        'high': '#fa8c16',
+        'urgent': '#f5222d'
+    };
+
+    content.innerHTML = `
+        <div class="page-header">
+            <h2 class="page-title">公文统计分析</h2>
+            <div class="page-subtitle">全局流转数据概览 · 实时统计</div>
+        </div>
+
+        <div class="stats-grid statistics-overview">
+            <div class="stat-card stat-overview-card">
+                <div class="stat-icon blue">📄</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.total}</div>
+                    <div class="stat-label">公文总数</div>
+                </div>
+            </div>
+            <div class="stat-card stat-overview-card">
+                <div class="stat-icon green">✅</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.completedCount}</div>
+                    <div class="stat-label">已办结</div>
+                </div>
+            </div>
+            <div class="stat-card stat-overview-card">
+                <div class="stat-icon orange">⏳</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.total - stats.completedCount}</div>
+                    <div class="stat-label">办理中</div>
+                </div>
+            </div>
+            <div class="stat-card stat-overview-card">
+                <div class="stat-icon purple">⏱️</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.avgHandleDays}<span style="font-size:14px;font-weight:400;"> 天</span></div>
+                    <div class="stat-label">平均办理时长</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="statistics-row">
+            <div class="card statistics-card">
+                <div class="card-header">
+                    <span class="card-title">📊 按状态分布</span>
+                </div>
+                <div class="card-body">
+                    <div class="status-distribution">
+                        ${statusItems.map(item => `
+                            <div class="distribution-item" onclick="goToListFromStats('status', '${item.key}')">
+                                <div class="distribution-label">
+                                    <span class="distribution-dot" style="background:${statusColors[item.key] || '#d9d9d9'}"></span>
+                                    <span class="distribution-name">${item.label}</span>
+                                </div>
+                                <div class="distribution-value">
+                                    <span class="distribution-count">${item.count}</span>
+                                    <span class="distribution-arrow">→</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <div class="card statistics-card">
+                <div class="card-header">
+                    <span class="card-title">🏢 按科室分布</span>
+                </div>
+                <div class="card-body">
+                    <div class="bar-chart">
+                        ${deptItems.length > 0 ? deptItems.map(item => `
+                            <div class="bar-item" onclick="goToListFromStats('assignedDept', '${item.key}')">
+                                <div class="bar-label">
+                                    <span class="bar-name">${item.label}</span>
+                                    <span class="bar-count">${item.count}</span>
+                                </div>
+                                <div class="bar-track">
+                                    <div class="bar-fill bar-fill-dept" style="width:${(item.count / maxDeptCount * 100).toFixed(1)}%"></div>
+                                </div>
+                            </div>
+                        `).join('') : '<div class="empty-state" style="padding:30px 0;"><p>暂无数据</p></div>'}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="statistics-row">
+            <div class="card statistics-card">
+                <div class="card-header">
+                    <span class="card-title">🚨 按紧急程度分布</span>
+                </div>
+                <div class="card-body">
+                    <div class="priority-distribution">
+                        ${priorityItems.map(item => `
+                            <div class="priority-item" onclick="goToListFromStats('priority', '${item.key}')">
+                                <div class="priority-ring" style="border-color:${priorityColors[item.key]}">
+                                    <span class="priority-count">${item.count}</span>
+                                    <span class="priority-label">${item.label}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <div class="card statistics-card">
+                <div class="card-header">
+                    <span class="card-title">📑 按公文类别分布</span>
+                </div>
+                <div class="card-body">
+                    <div class="bar-chart">
+                        ${categoryItems.length > 0 ? categoryItems.map(item => `
+                            <div class="bar-item" onclick="goToListFromStats('category', '${item.key === '未分类' ? '__none__' : item.key}')">
+                                <div class="bar-label">
+                                    <span class="bar-name">${item.label}</span>
+                                    <span class="bar-count">${item.count}</span>
+                                </div>
+                                <div class="bar-track">
+                                    <div class="bar-fill bar-fill-category" style="width:${(item.count / maxCategoryCount * 100).toFixed(1)}%"></div>
+                                </div>
+                            </div>
+                        `).join('') : '<div class="empty-state" style="padding:30px 0;"><p>暂无数据</p></div>'}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">📈 近30天登记量趋势</span>
+                <span class="card-subtitle">共 ${stats.last30Days.reduce((s, d) => s + d.count, 0)} 件</span>
+            </div>
+            <div class="card-body">
+                <div class="line-chart">
+                    <div class="line-chart-bars">
+                        ${stats.last30Days.map(item => {
+                            const height = maxDayCount > 0 ? (item.count / maxDayCount * 100) : 0;
+                            const showLabel = item.date.endsWith('01') || item.date.endsWith('15') || item.date === stats.last30Days[stats.last30Days.length - 1].date;
+                            return `
+                                <div class="line-bar-item" title="${item.date}: ${item.count}件">
+                                    <div class="line-bar-value">${item.count > 0 ? item.count : ''}</div>
+                                    <div class="line-bar-wrap">
+                                        <div class="line-bar-fill" style="height:${height}%"></div>
+                                    </div>
+                                    <div class="line-bar-label">${showLabel ? item.date.slice(5) : ''}</div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function goToListFromStats(filterKey, filterValue) {
+    const filters = {};
+    if (filterKey && filterValue !== undefined && filterValue !== null && filterValue !== '') {
+        filters[filterKey] = filterValue;
+    }
+    navigateTo('list', { filters });
 }
 
 function renderArchiveList() {

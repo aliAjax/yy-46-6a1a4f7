@@ -440,6 +440,18 @@ class DataStore {
             });
         }
 
+        if (filters.priority) {
+            result = result.filter(d => d.priority === filters.priority);
+        }
+
+        if (filters.category) {
+            if (filters.category === '__none__') {
+                result = result.filter(d => !d.category || d.category === '');
+            } else {
+                result = result.filter(d => d.category === filters.category);
+            }
+        }
+
         return result;
     }
 
@@ -996,6 +1008,100 @@ class DataStore {
                 }
             }
         });
+
+        return stats;
+    }
+
+    getAnalyticsStats() {
+        const stats = {
+            total: this.docs.length,
+            statusDistribution: {},
+            deptDistribution: {},
+            priorityDistribution: {},
+            categoryDistribution: {},
+            last30Days: [],
+            avgHandleDays: 0,
+            completedCount: 0
+        };
+
+        Object.values(FLOW_NODES).forEach(node => {
+            stats.statusDistribution[node] = 0;
+        });
+
+        DEPARTMENTS.forEach(dept => {
+            stats.deptDistribution[dept] = 0;
+        });
+
+        Object.keys(PRIORITY_LABELS).forEach(p => {
+            stats.priorityDistribution[p] = 0;
+        });
+
+        const CATEGORIES = ['通知', '请示', '报告', '批复', '函', '会议纪要', '意见', '其他'];
+        CATEGORIES.forEach(c => {
+            stats.categoryDistribution[c] = 0;
+        });
+        stats.categoryDistribution['未分类'] = 0;
+
+        const now = new Date();
+        const last30DaysMap = {};
+        for (let i = 29; i >= 0; i--) {
+            const d = new Date(now.getTime() - i * 86400000);
+            const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            last30DaysMap[dateStr] = 0;
+        }
+
+        let totalHandleDays = 0;
+        let completedCount = 0;
+
+        this.docs.forEach(doc => {
+            stats.statusDistribution[doc.currentNode] = (stats.statusDistribution[doc.currentNode] || 0) + 1;
+
+            if (doc.assignedDept) {
+                stats.deptDistribution[doc.assignedDept] = (stats.deptDistribution[doc.assignedDept] || 0) + 1;
+            }
+            if (doc.isMultiDept && doc.handleRecords) {
+                doc.handleRecords.forEach(hr => {
+                    if (hr.dept && hr.dept !== doc.assignedDept) {
+                        stats.deptDistribution[hr.dept] = (stats.deptDistribution[hr.dept] || 0) + 1;
+                    }
+                });
+            }
+
+            stats.priorityDistribution[doc.priority] = (stats.priorityDistribution[doc.priority] || 0) + 1;
+
+            if (doc.category && stats.categoryDistribution.hasOwnProperty(doc.category)) {
+                stats.categoryDistribution[doc.category]++;
+            } else if (!doc.category) {
+                stats.categoryDistribution['未分类']++;
+            } else {
+                stats.categoryDistribution['其他']++;
+            }
+
+            const createDate = doc.createdAt ? new Date(doc.createdAt).toISOString().split('T')[0] : null;
+            if (createDate && last30DaysMap.hasOwnProperty(createDate)) {
+                last30DaysMap[createDate]++;
+            }
+
+            if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
+                const registerRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.REGISTER);
+                const completeRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.COMPLETE);
+                if (registerRecord && completeRecord && registerRecord.time && completeRecord.time) {
+                    const startTime = new Date(registerRecord.time).getTime();
+                    const endTime = new Date(completeRecord.time).getTime();
+                    const days = Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24));
+                    totalHandleDays += days;
+                    completedCount++;
+                }
+            }
+        });
+
+        stats.last30Days = Object.entries(last30DaysMap).map(([date, count]) => ({
+            date,
+            count
+        }));
+
+        stats.completedCount = completedCount;
+        stats.avgHandleDays = completedCount > 0 ? Math.round((totalHandleDays / completedCount) * 10) / 10 : 0;
 
         return stats;
     }

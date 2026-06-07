@@ -2148,3 +2148,309 @@ body {
 #subModal .modal-overlay {
     z-index: 1000;
 }
+
+/* === 公文统计分析样式 === */
+
+.statistics-overview .stat-overview-card {
+    border-left: 4px solid #1890ff;
+    transition: all 0.3s;
+    cursor: default;
+}
+
+.statistics-overview .stat-overview-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.stat-icon.purple {
+    background: #f9f0ff;
+}
+
+.statistics-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.statistics-card {
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.statistics-card .card-body {
+    flex: 1;
+}
+
+.card-subtitle {
+    font-size: 12px;
+    color: #999;
+    font-weight: normal;
+}
+
+/* 状态分布列表 */
+.status-distribution {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.distribution-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: #fafafa;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid #f0f0f0;
+}
+
+.distribution-item:hover {
+    background: #f0f7ff;
+    border-color: #91d5ff;
+    transform: translateX(4px);
+}
+
+.distribution-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.distribution-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.distribution-name {
+    font-size: 14px;
+    color: #333;
+}
+
+.distribution-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.distribution-count {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+}
+
+.distribution-arrow {
+    color: #bbb;
+    font-size: 12px;
+}
+
+.distribution-item:hover .distribution-arrow {
+    color: #1890ff;
+}
+
+/* 条形图 */
+.bar-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.bar-item {
+    cursor: pointer;
+    transition: all 0.2s;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+.bar-item:hover {
+    background: #f0f7ff;
+}
+
+.bar-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.bar-name {
+    font-size: 13px;
+    color: #333;
+    font-weight: 500;
+}
+
+.bar-count {
+    font-size: 13px;
+    color: #666;
+    font-weight: 600;
+}
+
+.bar-track {
+    height: 8px;
+    background: #f0f0f0;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.6s ease;
+}
+
+.bar-fill-dept {
+    background: linear-gradient(90deg, #1890ff, #40a9ff);
+}
+
+.bar-fill-category {
+    background: linear-gradient(90deg, #722ed1, #9254de);
+}
+
+/* 紧急程度分布环形图 */
+.priority-distribution {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    padding: 10px 0;
+}
+
+.priority-item {
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.priority-item:hover {
+    transform: scale(1.05);
+}
+
+.priority-ring {
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    border: 6px solid;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    transition: all 0.3s;
+}
+
+.priority-item:hover .priority-ring {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.priority-count {
+    font-size: 20px;
+    font-weight: 700;
+    color: #333;
+    line-height: 1.2;
+}
+
+.priority-label {
+    font-size: 12px;
+    color: #666;
+    margin-top: 2px;
+}
+
+/* 近30天趋势折线柱状图 */
+.line-chart {
+    position: relative;
+    padding-top: 10px;
+}
+
+.line-chart-bars {
+    display: flex;
+    align-items: flex-end;
+    height: 200px;
+    gap: 2px;
+    padding: 0 4px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.line-bar-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    position: relative;
+}
+
+.line-bar-value {
+    position: absolute;
+    top: 0;
+    font-size: 11px;
+    color: #666;
+    font-weight: 500;
+}
+
+.line-bar-wrap {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    align-items: flex-end;
+    padding-top: 20px;
+}
+
+.line-bar-fill {
+    width: 100%;
+    background: linear-gradient(180deg, #c41e3a 0%, #ff7875 100%);
+    border-radius: 2px 2px 0 0;
+    transition: height 0.6s ease;
+    min-height: 2px;
+}
+
+.line-bar-item:hover .line-bar-fill {
+    background: linear-gradient(180deg, #8b0000 0%, #c41e3a 100%);
+}
+
+.line-bar-label {
+    font-size: 11px;
+    color: #999;
+    margin-top: 6px;
+    height: 16px;
+    white-space: nowrap;
+}
+
+/* 列表搜索栏样式 */
+.list-search-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px 16px;
+}
+
+.list-search-bar .form-group {
+    margin-bottom: 0;
+}
+
+.list-search-bar .search-actions {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+}
+
+@media (max-width: 768px) {
+    .statistics-row {
+        grid-template-columns: 1fr;
+    }
+
+    .list-search-bar {
+        grid-template-columns: 1fr;
+    }
+
+    .priority-distribution {
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .priority-ring {
+        width: 75px;
+        height: 75px;
+    }
+}
