@@ -2380,6 +2380,7 @@ body {
     align-items: center;
     height: 100%;
     position: relative;
+    cursor: pointer;
 }
 
 .line-bar-value {
@@ -2408,6 +2409,11 @@ body {
 
 .line-bar-item:hover .line-bar-fill {
     background: linear-gradient(180deg, #8b0000 0%, #c41e3a 100%);
+}
+
+.line-bar-item:focus-visible {
+    outline: 2px solid #1890ff;
+    outline-offset: 2px;
 }
 
 .line-bar-label {

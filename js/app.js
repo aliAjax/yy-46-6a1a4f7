@@ -452,6 +452,8 @@ function renderDocList() {
     const dept = currentFilters.assignedDept || '';
     const priority = currentFilters.priority || '';
     const category = currentFilters.category || '';
+    const startDate = currentFilters.startDate || '';
+    const endDate = currentFilters.endDate || '';
 
     content.innerHTML = `
         <div class="page-header">
@@ -498,6 +500,14 @@ function renderDocList() {
                             ${modeOptions.map(o => `<option value="${o.value}" ${o.value === mode ? 'selected' : ''}>${o.label}</option>`).join('')}
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">登记开始日期</label>
+                        <input type="date" class="form-input" id="searchStartDate" value="${startDate}" onchange="applyFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">登记结束日期</label>
+                        <input type="date" class="form-input" id="searchEndDate" value="${endDate}" onchange="applyFilters()">
+                    </div>
                     <div class="search-actions">
                         <button class="btn btn-primary" onclick="applyFilters()">🔍 查询</button>
                         <button class="btn btn-default" onclick="resetFilters()">重置</button>
@@ -529,6 +539,8 @@ function applyFilters() {
         assignedDept: document.getElementById('searchDept').value,
         priority: document.getElementById('searchPriority').value,
         category: document.getElementById('searchCategory').value,
+        startDate: document.getElementById('searchStartDate').value,
+        endDate: document.getElementById('searchEndDate').value,
         isMultiDept: isMultiDept
     };
     document.getElementById('docListTable').innerHTML = renderDocTable();
@@ -542,6 +554,8 @@ function resetFilters() {
     document.getElementById('searchPriority').value = '';
     document.getElementById('searchCategory').value = '';
     document.getElementById('searchMode').value = '';
+    document.getElementById('searchStartDate').value = '';
+    document.getElementById('searchEndDate').value = '';
     document.getElementById('docListTable').innerHTML = renderDocTable();
 }
 
@@ -791,7 +805,7 @@ function renderStatistics() {
                             const height = maxDayCount > 0 ? (item.count / maxDayCount * 100) : 0;
                             const showLabel = item.date.endsWith('01') || item.date.endsWith('15') || item.date === stats.last30Days[stats.last30Days.length - 1].date;
                             return `
-                                <div class="line-bar-item" title="${item.date}: ${item.count}件">
+                                <div class="line-bar-item" title="${item.date}: ${item.count}件" onclick="goToListFromStats('createdDate', '${item.date}')" role="button" tabindex="0">
                                     <div class="line-bar-value">${item.count > 0 ? item.count : ''}</div>
                                     <div class="line-bar-wrap">
                                         <div class="line-bar-fill" style="height:${height}%"></div>
@@ -810,7 +824,12 @@ function renderStatistics() {
 function goToListFromStats(filterKey, filterValue) {
     const filters = {};
     if (filterKey && filterValue !== undefined && filterValue !== null && filterValue !== '') {
-        filters[filterKey] = filterValue;
+        if (filterKey === 'createdDate') {
+            filters.startDate = filterValue;
+            filters.endDate = filterValue;
+        } else {
+            filters[filterKey] = filterValue;
+        }
     }
     navigateTo('list', { filters });
 }
