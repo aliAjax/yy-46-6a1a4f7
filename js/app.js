@@ -10,6 +10,8 @@ let isArchiveDetail = false;
 let currentImportBatchId = null;
 let currentImportFilters = {};
 
+let currentAttachmentFilters = {};
+
 function init() {
     updateUserSelect(ROLES.OFFICE);
     const savedRole = sessionStorage.getItem('doc_flow_role');
@@ -78,6 +80,7 @@ function renderNav() {
 
     menuItems.push({ key: 'dashboard', label: '工作台', icon: '🏠' });
     menuItems.push({ key: 'list', label: '公文列表', icon: '📋' });
+    menuItems.push({ key: 'attachments', label: '附件管理中心', icon: '📎' });
     menuItems.push({ key: 'supervision', label: '督办预警中心', icon: '⚠️' });
 
     if (currentRole === ROLES.OFFICE || currentRole === ROLES.LEADER) {
@@ -124,6 +127,9 @@ function navigateTo(page, params = {}) {
                 currentFilters = { ...params.filters };
             }
             renderDocList();
+            break;
+        case 'attachments':
+            renderAttachmentCenter();
             break;
         case 'statistics':
             renderStatistics();
@@ -1168,6 +1174,250 @@ function quickSupervise(docId) {
     showSuperviseModal();
 }
 
+function renderAttachmentCenter() {
+    const content = document.getElementById('contentArea');
+    const stats = dataStore.getAttachmentStats();
+
+    const nodeOptions = [{ value: '', label: '全部节点' }];
+    Object.entries(NODE_LABELS).forEach(([key, label]) => {
+        nodeOptions.push({ value: key, label: label });
+    });
+
+    const deptOptions = [{ value: '', label: '全部科室' }];
+    DEPARTMENTS.forEach(d => deptOptions.push({ value: d, label: d }));
+
+    const fileTypeOptions = [{ value: '', label: '全部类型' }];
+    Object.entries(FILE_TYPE_LABELS).forEach(([key, label]) => {
+        fileTypeOptions.push({ value: key, label: label });
+    });
+
+    const uploaderOptions = [{ value: '', label: '全部上传人' }];
+    Object.values(USERS).flat().forEach(u => {
+        uploaderOptions.push({ value: u.id, label: `${u.name}（${u.dept}）` });
+    });
+
+    const kw = currentAttachmentFilters.keyword || '';
+    const node = currentAttachmentFilters.node || '';
+    const uploaderId = currentAttachmentFilters.uploaderId || '';
+    const uploaderDept = currentAttachmentFilters.uploaderDept || '';
+    const fileType = currentAttachmentFilters.fileType || '';
+    const startDate = currentAttachmentFilters.startDate || '';
+    const endDate = currentAttachmentFilters.endDate || '';
+
+    content.innerHTML = `
+        <div class="page-header">
+            <h2 class="page-title">附件管理中心</h2>
+            <div class="page-subtitle">集中管理所有公文流转中的附件</div>
+        </div>
+
+        <div class="stats-grid attachment-stats-grid">
+            <div class="stat-card attachment-stat-card">
+                <div class="stat-icon blue">📎</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.total}</div>
+                    <div class="stat-label">附件总数</div>
+                </div>
+            </div>
+            <div class="stat-card attachment-stat-card">
+                <div class="stat-icon green">📅</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.last7Days}</div>
+                    <div class="stat-label">近7天新增</div>
+                </div>
+            </div>
+            <div class="stat-card attachment-stat-card">
+                <div class="stat-icon orange">📊</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.last30Days}</div>
+                    <div class="stat-label">近30天新增</div>
+                </div>
+            </div>
+            <div class="stat-card attachment-stat-card">
+                <div class="stat-icon purple">📄</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.byType.doc + stats.byType.pdf || 0}</div>
+                    <div class="stat-label">文档类</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="search-bar attachment-search-bar">
+                    <div class="form-group">
+                        <label class="form-label">关键词</label>
+                        <input type="text" class="form-input" id="attKeyword" placeholder="文件名、公文标题、文号"
+                               value="${kw}"
+                               onkeyup="if(event.key==='Enter') applyAttachmentFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">上传节点</label>
+                        <select class="form-select" id="attNode" onchange="applyAttachmentFilters()">
+                            ${nodeOptions.map(o => `<option value="${o.value}" ${o.value === node ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">上传科室</label>
+                        <select class="form-select" id="attDept" onchange="updateAttachmentUploaderOptions(); applyAttachmentFilters()">
+                            ${deptOptions.map(o => `<option value="${o.value}" ${o.value === uploaderDept ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">上传人</label>
+                        <select class="form-select" id="attUploader" onchange="applyAttachmentFilters()">
+                            ${uploaderOptions.map(o => `<option value="${o.value}" ${o.value === uploaderId ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">文件类型</label>
+                        <select class="form-select" id="attFileType" onchange="applyAttachmentFilters()">
+                            ${fileTypeOptions.map(o => `<option value="${o.value}" ${o.value === fileType ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">开始日期</label>
+                        <input type="date" class="form-input" id="attStartDate" value="${startDate}" onchange="applyAttachmentFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">结束日期</label>
+                        <input type="date" class="form-input" id="attEndDate" value="${endDate}" onchange="applyAttachmentFilters()">
+                    </div>
+                    <div class="search-actions">
+                        <button class="btn btn-primary" onclick="applyAttachmentFilters()">🔍 查询</button>
+                        <button class="btn btn-default" onclick="resetAttachmentFilters()">重置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body" style="padding:0;" id="attachmentListTable">
+                ${renderAttachmentTable()}
+            </div>
+        </div>
+    `;
+}
+
+function applyAttachmentFilters() {
+    currentAttachmentFilters = {
+        keyword: document.getElementById('attKeyword').value.trim(),
+        node: document.getElementById('attNode').value,
+        uploaderId: document.getElementById('attUploader').value,
+        uploaderDept: document.getElementById('attDept').value,
+        fileType: document.getElementById('attFileType').value,
+        startDate: document.getElementById('attStartDate').value,
+        endDate: document.getElementById('attEndDate').value
+    };
+    document.getElementById('attachmentListTable').innerHTML = renderAttachmentTable();
+}
+
+function resetAttachmentFilters() {
+    currentAttachmentFilters = {};
+    document.getElementById('attKeyword').value = '';
+    document.getElementById('attNode').value = '';
+    document.getElementById('attDept').value = '';
+    document.getElementById('attUploader').value = '';
+    document.getElementById('attFileType').value = '';
+    document.getElementById('attStartDate').value = '';
+    document.getElementById('attEndDate').value = '';
+    document.getElementById('attachmentListTable').innerHTML = renderAttachmentTable();
+}
+
+function updateAttachmentUploaderOptions() {
+    const dept = document.getElementById('attDept').value;
+    const uploaderSelect = document.getElementById('attUploader');
+
+    let options = '<option value="">全部上传人</option>';
+
+    if (dept) {
+        const users = Object.values(USERS).flat().filter(u => u.dept === dept);
+        users.forEach(u => {
+            options += `<option value="${u.id}">${u.name}</option>`;
+        });
+    } else {
+        Object.values(USERS).flat().forEach(u => {
+            options += `<option value="${u.id}">${u.name}（${u.dept}）</option>`;
+        });
+    }
+
+    uploaderSelect.innerHTML = options;
+}
+
+function renderAttachmentTable() {
+    const attachments = dataStore.listAttachments(currentAttachmentFilters);
+
+    if (attachments.length === 0) {
+        return '<div class="empty-state"><div class="empty-icon">📎</div><p>暂无符合条件的附件</p></div>';
+    }
+
+    return `
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>文件</th>
+                        <th>类型</th>
+                        <th>所属公文</th>
+                        <th>上传节点</th>
+                        <th>上传人</th>
+                        <th>上传科室</th>
+                        <th>上传时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${attachments.map(att => `
+                        <tr>
+                            <td>
+                                <div class="attachment-file-cell">
+                                    <span class="attachment-file-icon">${att.fileIcon}</span>
+                                    <span class="attachment-file-name" title="${att.fileName}">${att.fileName}</span>
+                                </div>
+                            </td>
+                            <td><span class="file-type-badge file-type-${att.fileType}">${att.fileTypeLabel}</span></td>
+                            <td class="td-ellipsis" title="${att.docTitle}">
+                                <div style="font-size:12px; color:#999; margin-bottom:2px;">${att.docId}</div>
+                                <div>${att.docTitle}</div>
+                            </td>
+                            <td>
+                                <span class="attachment-node-tag">${att.nodeLabel}</span>
+                                ${att.isReturn ? '<span class="badge-return">退回</span>' : ''}
+                                ${att.isResubmit ? '<span class="badge-resubmit">重提</span>' : ''}
+                                ${att.handleType ? `<span class="badge-handle-${att.handleType}">${att.handleType === 'main' ? '主办' : '协办'}</span>` : ''}
+                            </td>
+                            <td>${att.uploaderName || '-'}</td>
+                            <td>${att.uploaderDept || '-'}</td>
+                            <td>${formatDateTime(att.uploadTime)}</td>
+                            <td>
+                                <a class="action-link" onclick="goToDocFromAttachment('${att.docId}', ${att.recordIndex})">查看公文</a>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function goToDocFromAttachment(docId, recordIndex) {
+    currentDocId = docId;
+    isArchiveDetail = false;
+    navigateTo('detail', { id: docId });
+    setTimeout(() => {
+        const timeline = document.querySelector('.timeline');
+        if (timeline) {
+            const items = timeline.querySelectorAll('.timeline-item');
+            if (items[recordIndex]) {
+                items[recordIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                items[recordIndex].classList.add('timeline-highlight');
+                setTimeout(() => {
+                    items[recordIndex].classList.remove('timeline-highlight');
+                }, 3000);
+            }
+        }
+    }, 100);
+}
+
 function renderRegisterForm() {
     const content = document.getElementById('contentArea');
 
@@ -1513,13 +1763,14 @@ function renderDocDetail() {
                     </div>
                     ${registerRecord && registerRecord.attachments && registerRecord.attachments.length > 0 ? `
                     <div class="detail-item full-width">
-                        <span class="detail-label">原文附件</span>
+                        <span class="detail-label">原文附件 <span style="color:#999; font-weight:normal;">（来自：${NODE_LABELS[FLOW_NODES.REGISTER]} · ${registerRecord.operatorName}）</span></span>
                         <div class="attachment-list">
                             ${registerRecord.attachments.map(a => `
                                 <div class="attachment-item">
-                                    <span class="attachment-icon">📎</span>
+                                    <span class="attachment-icon">${getFileIcon(a.name)}</span>
                                     <span class="attachment-name">${a.name}</span>
                                     <span class="attachment-size">${a.size}</span>
+                                    <span class="file-type-badge file-type-${getFileType(a.name)}" style="margin-left:auto;">${getFileTypeLabel(a.name)}</span>
                                 </div>
                             `).join('')}
                         </div>
@@ -1645,12 +1896,16 @@ function renderTimeline(doc) {
                     if (record.attachments && record.attachments.length > 0) {
                         contentHtml += `
                             <div class="timeline-attachment">
-                                <div style="font-size:12px; color:#888; margin-bottom:4px;">附件：</div>
+                                <div style="font-size:12px; color:#888; margin-bottom:8px;">
+                                    附件（${record.attachments.length}个）
+                                    <span style="margin-left:8px; color:#aaa;">上传人：${record.operatorName}</span>
+                                </div>
                                 ${record.attachments.map(a => `
-                                    <div class="attachment-item" style="padding:4px 8px;">
-                                        <span class="attachment-icon" style="font-size:16px;">📎</span>
+                                    <div class="attachment-item timeline-attachment-item">
+                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
                                         <span class="attachment-name">${a.name}</span>
                                         <span class="attachment-size">${a.size}</span>
+                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
                                     </div>
                                 `).join('')}
                             </div>
@@ -1741,12 +1996,16 @@ function renderMultiHandleTimelineContent(doc, records) {
                         ${flowRecord.comment ? `<div class="timeline-comment">${flowRecord.comment}</div>` : ''}
                         ${flowRecord.attachments && flowRecord.attachments.length > 0 ? `
                             <div class="timeline-attachment">
-                                <div style="font-size:12px; color:#888; margin-bottom:4px;">附件：</div>
+                                <div style="font-size:12px; color:#888; margin-bottom:8px;">
+                                    附件（${flowRecord.attachments.length}个）
+                                    <span style="margin-left:8px; color:#aaa;">上传人：${flowRecord.operatorName}</span>
+                                </div>
                                 ${flowRecord.attachments.map(a => `
-                                    <div class="attachment-item" style="padding:4px 8px;">
-                                        <span class="attachment-icon" style="font-size:16px;">📎</span>
+                                    <div class="attachment-item timeline-attachment-item">
+                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
                                         <span class="attachment-name">${a.name}</span>
                                         <span class="attachment-size">${a.size}</span>
+                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
                                     </div>
                                 `).join('')}
                             </div>

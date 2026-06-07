@@ -113,6 +113,99 @@ const HANDLE_STATUS_LABELS = {
     [HANDLE_STATUS.COMPLETED]: '已完成'
 };
 
+const FILE_TYPES = {
+    DOC: 'doc',
+    XLS: 'xls',
+    PPT: 'ppt',
+    PDF: 'pdf',
+    IMAGE: 'image',
+    ZIP: 'zip',
+    OTHER: 'other'
+};
+
+const FILE_TYPE_LABELS = {
+    [FILE_TYPES.DOC]: '文档',
+    [FILE_TYPES.XLS]: '表格',
+    [FILE_TYPES.PPT]: '演示',
+    [FILE_TYPES.PDF]: 'PDF',
+    [FILE_TYPES.IMAGE]: '图片',
+    [FILE_TYPES.ZIP]: '压缩包',
+    [FILE_TYPES.OTHER]: '其他'
+};
+
+const FILE_TYPE_EXTENSIONS = {
+    [FILE_TYPES.DOC]: ['doc', 'docx', 'wps', 'txt', 'rtf'],
+    [FILE_TYPES.XLS]: ['xls', 'xlsx', 'csv'],
+    [FILE_TYPES.PPT]: ['ppt', 'pptx'],
+    [FILE_TYPES.PDF]: ['pdf'],
+    [FILE_TYPES.IMAGE]: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'],
+    [FILE_TYPES.ZIP]: ['zip', 'rar', '7z', 'tar', 'gz']
+};
+
+function getFileType(fileName) {
+    if (!fileName) return FILE_TYPES.OTHER;
+    const ext = fileName.split('.').pop().toLowerCase();
+    for (const [type, exts] of Object.entries(FILE_TYPE_EXTENSIONS)) {
+        if (exts.includes(ext)) {
+            return type;
+        }
+    }
+    return FILE_TYPES.OTHER;
+}
+
+function getFileTypeLabel(fileName) {
+    return FILE_TYPE_LABELS[getFileType(fileName)] || FILE_TYPE_LABELS[FILE_TYPES.OTHER];
+}
+
+function getFileIcon(fileName) {
+    const type = getFileType(fileName);
+    const icons = {
+        [FILE_TYPES.DOC]: '📄',
+        [FILE_TYPES.XLS]: '📊',
+        [FILE_TYPES.PPT]: '📽️',
+        [FILE_TYPES.PDF]: '📕',
+        [FILE_TYPES.IMAGE]: '🖼️',
+        [FILE_TYPES.ZIP]: '📦',
+        [FILE_TYPES.OTHER]: '📎'
+    };
+    return icons[type] || '📎';
+}
+
+function extractDocAttachments(doc) {
+    const attachments = [];
+    if (!doc || !doc.flowRecords) return attachments;
+
+    doc.flowRecords.forEach((record, recordIndex) => {
+        if (record.attachments && record.attachments.length > 0) {
+            record.attachments.forEach((att, attIndex) => {
+                attachments.push({
+                    id: `${doc.id}_${recordIndex}_${attIndex}`,
+                    docId: doc.id,
+                    docTitle: doc.title,
+                    fileName: att.name,
+                    fileSize: att.size,
+                    fileType: getFileType(att.name),
+                    fileTypeLabel: getFileTypeLabel(att.name),
+                    fileIcon: getFileIcon(att.name),
+                    node: record.node,
+                    nodeLabel: NODE_LABELS[record.node] || record.node,
+                    uploaderId: record.operatorId,
+                    uploaderName: record.operatorName,
+                    uploaderDept: record.operatorDept,
+                    uploadTime: record.time,
+                    recordIndex: recordIndex,
+                    isReturn: record.isReturn || false,
+                    isResubmit: record.isResubmit || false,
+                    handleType: record.handleType || null,
+                    handleDept: record.handleDept || null
+                });
+            });
+        }
+    });
+
+    return attachments;
+}
+
 function getDeadline(doc) {
     if (!doc.deadline) return null;
     return doc.deadline;
@@ -1182,6 +1275,114 @@ class DataStore {
 
         stats.completedCount = completedCount;
         stats.avgHandleDays = completedCount > 0 ? Math.round((totalHandleDays / completedCount) * 10) / 10 : 0;
+
+        return stats;
+    }
+
+    listAttachments(filters = {}) {
+        let allAttachments = [];
+
+        this.docs.forEach(doc => {
+            const docAttachments = extractDocAttachments(doc);
+            allAttachments = allAttachments.concat(docAttachments);
+        });
+
+        if (filters.keyword) {
+            const kw = filters.keyword.toLowerCase();
+            allAttachments = allAttachments.filter(a =>
+                a.fileName.toLowerCase().includes(kw) ||
+                a.docTitle.toLowerCase().includes(kw) ||
+                a.docId.toLowerCase().includes(kw)
+            );
+        }
+
+        if (filters.docId) {
+            allAttachments = allAttachments.filter(a => a.docId === filters.docId);
+        }
+
+        if (filters.node) {
+            allAttachments = allAttachments.filter(a => a.node === filters.node);
+        }
+
+        if (filters.uploaderId) {
+            allAttachments = allAttachments.filter(a => a.uploaderId === filters.uploaderId);
+        }
+
+        if (filters.uploaderDept) {
+            allAttachments = allAttachments.filter(a => a.uploaderDept === filters.uploaderDept);
+        }
+
+        if (filters.fileType) {
+            allAttachments = allAttachments.filter(a => a.fileType === filters.fileType);
+        }
+
+        if (filters.startDate) {
+            allAttachments = allAttachments.filter(a => {
+                if (!a.uploadTime) return false;
+                return new Date(a.uploadTime) >= new Date(filters.startDate + 'T00:00:00');
+            });
+        }
+
+        if (filters.endDate) {
+            allAttachments = allAttachments.filter(a => {
+                if (!a.uploadTime) return false;
+                return new Date(a.uploadTime) <= new Date(filters.endDate + 'T23:59:59');
+            });
+        }
+
+        allAttachments.sort((a, b) => {
+            const timeA = a.uploadTime ? new Date(a.uploadTime).getTime() : 0;
+            const timeB = b.uploadTime ? new Date(b.uploadTime).getTime() : 0;
+            return timeB - timeA;
+        });
+
+        return allAttachments;
+    }
+
+    getAttachmentStats() {
+        const allAttachments = this.listAttachments();
+        const stats = {
+            total: allAttachments.length,
+            byType: {},
+            byNode: {},
+            byDept: {},
+            last7Days: 0,
+            last30Days: 0
+        };
+
+        Object.values(FILE_TYPES).forEach(type => {
+            stats.byType[type] = 0;
+        });
+
+        Object.values(FLOW_NODES).forEach(node => {
+            stats.byNode[node] = 0;
+        });
+
+        DEPARTMENTS.forEach(dept => {
+            stats.byDept[dept] = 0;
+        });
+
+        const now = new Date();
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000);
+
+        allAttachments.forEach(att => {
+            stats.byType[att.fileType] = (stats.byType[att.fileType] || 0) + 1;
+            stats.byNode[att.node] = (stats.byNode[att.node] || 0) + 1;
+            if (att.uploaderDept) {
+                stats.byDept[att.uploaderDept] = (stats.byDept[att.uploaderDept] || 0) + 1;
+            }
+
+            if (att.uploadTime) {
+                const uploadTime = new Date(att.uploadTime);
+                if (uploadTime >= sevenDaysAgo) {
+                    stats.last7Days++;
+                }
+                if (uploadTime >= thirtyDaysAgo) {
+                    stats.last30Days++;
+                }
+            }
+        });
 
         return stats;
     }

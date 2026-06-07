@@ -2572,7 +2572,213 @@ body {
     }
 
     .priority-ring {
-        width: 75px;
-        height: 75px;
+    width: 75px;
+    height: 75px;
+}
+}
+
+/* === 附件管理中心样式 === */
+
+.attachment-stats-grid {
+    grid-template-columns: repeat(4, 1fr) !important;
+}
+
+.attachment-stat-card {
+    cursor: default;
+    transition: all 0.3s;
+}
+
+.attachment-stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.attachment-search-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px 16px;
+}
+
+.attachment-search-bar .form-group {
+    margin-bottom: 0;
+}
+
+.attachment-search-bar .search-actions {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+}
+
+.attachment-file-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 200px;
+}
+
+.attachment-file-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.attachment-file-name {
+    flex: 1;
+    font-size: 13px;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+}
+
+.attachment-node-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #f0f0f0;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #555;
+    margin-right: 4px;
+}
+
+.badge-return {
+    display: inline-block;
+    padding: 1px 6px;
+    background: #fff1f0;
+    color: #f5222d;
+    border: 1px solid #ffa39e;
+    border-radius: 4px;
+    font-size: 11px;
+    margin-right: 4px;
+}
+
+.badge-resubmit {
+    display: inline-block;
+    padding: 1px 6px;
+    background: #f6ffed;
+    color: #52c41a;
+    border: 1px solid #b7eb8f;
+    border-radius: 4px;
+    font-size: 11px;
+    margin-right: 4px;
+}
+
+.badge-handle-main {
+    display: inline-block;
+    padding: 1px 6px;
+    background: #e6f7ff;
+    color: #1890ff;
+    border: 1px solid #91d5ff;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.badge-handle-co {
+    display: inline-block;
+    padding: 1px 6px;
+    background: #fff7e6;
+    color: #fa8c16;
+    border: 1px solid #ffd591;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+/* 文件类型徽章 */
+.file-type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.file-type-doc {
+    background: #e6f7ff;
+    color: #1890ff;
+    border: 1px solid #91d5ff;
+}
+
+.file-type-xls {
+    background: #f6ffed;
+    color: #52c41a;
+    border: 1px solid #b7eb8f;
+}
+
+.file-type-ppt {
+    background: #fff7e6;
+    color: #fa8c16;
+    border: 1px solid #ffd591;
+}
+
+.file-type-pdf {
+    background: #fff1f0;
+    color: #f5222d;
+    border: 1px solid #ffa39e;
+}
+
+.file-type-image {
+    background: #f9f0ff;
+    color: #722ed1;
+    border: 1px solid #d3adf7;
+}
+
+.file-type-zip {
+    background: #fffbe6;
+    color: #d48806;
+    border: 1px solid #ffe58f;
+}
+
+.file-type-other {
+    background: #f5f5f5;
+    color: #666;
+    border: 1px solid #d9d9d9;
+}
+
+/* 时间线附件项 */
+.timeline-attachment-item {
+    padding: 6px 10px !important;
+    margin-bottom: 6px;
+}
+
+.timeline-attachment-item:last-child {
+    margin-bottom: 0;
+}
+
+.timeline-attachment-item .file-type-badge {
+    margin-left: auto;
+}
+
+/* 时间线高亮动画 */
+.timeline-item.timeline-highlight .timeline-content {
+    animation: timelineHighlight 3s ease;
+}
+
+@keyframes timelineHighlight {
+    0%, 100% {
+        background: #fafafa;
+    }
+    20%, 80% {
+        background: #e6f7ff;
+        box-shadow: 0 0 0 2px #91d5ff;
+    }
+}
+
+/* 详情页附件项 */
+.attachment-item .file-type-badge {
+    margin-left: auto;
+}
+
+@media (max-width: 768px) {
+    .attachment-stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    .attachment-search-bar {
+        grid-template-columns: 1fr;
+    }
+
+    .attachment-file-name {
+        max-width: 150px;
     }
 }
