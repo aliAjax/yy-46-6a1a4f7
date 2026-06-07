@@ -4,6 +4,7 @@ let currentPage = 'dashboard';
 let currentDocId = null;
 let currentFilters = {};
 let currentArchiveFilters = {};
+let currentSupervisionFilters = {};
 let isArchiveDetail = false;
 
 function init() {
@@ -74,6 +75,7 @@ function renderNav() {
 
     menuItems.push({ key: 'dashboard', label: '工作台', icon: '🏠' });
     menuItems.push({ key: 'list', label: '公文列表', icon: '📋' });
+    menuItems.push({ key: 'supervision', label: '督办预警中心', icon: '⚠️' });
 
     if (currentRole === ROLES.OFFICE) {
         menuItems.push({ key: 'register', label: '收文登记', icon: '✍️' });
@@ -112,6 +114,9 @@ function navigateTo(page, params = {}) {
         case 'list':
             renderDocList();
             break;
+        case 'supervision':
+            renderSupervisionCenter();
+            break;
         case 'register':
             renderRegisterForm();
             break;
@@ -134,6 +139,7 @@ function navigateTo(page, params = {}) {
 
 function renderDashboard() {
     const stats = dataStore.getStats(currentRole, currentUser);
+    const supStats = dataStore.getSupervisionStats(currentRole, currentUser);
     const content = document.getElementById('contentArea');
 
     let pendingList = [];
@@ -151,6 +157,10 @@ function renderDashboard() {
                 && d.assignedUser === currentUser.id)
             .slice(0, 5);
     }
+
+    const warningDocs = dataStore.listSupervisionDocs()
+        .filter(d => getWarningStatus(d) === WARNING_STATUS.OVERDUE || getWarningStatus(d) === WARNING_STATUS.APPROACHING)
+        .slice(0, 5);
 
     const recentList = dataStore.listDocs().slice(0, 5);
     const recentMessages = messageStore.getRecentMessages(currentRole, currentUser, 5);
@@ -189,6 +199,71 @@ function renderDashboard() {
                     <div class="stat-number">${stats.myPending}</div>
                     <div class="stat-label">待我处理</div>
                 </div>
+            </div>
+        </div>
+
+        <div class="stats-grid warning-stats">
+            <div class="stat-card warning-card-normal">
+                <div class="stat-icon green">🟢</div>
+                <div class="stat-info">
+                    <div class="stat-number">${supStats.normal}</div>
+                    <div class="stat-label">正常办理</div>
+                </div>
+            </div>
+            <div class="stat-card warning-card-approaching">
+                <div class="stat-icon orange">🟠</div>
+                <div class="stat-info">
+                    <div class="stat-number">${supStats.approaching}</div>
+                    <div class="stat-label">临期预警</div>
+                </div>
+            </div>
+            <div class="stat-card warning-card-overdue">
+                <div class="stat-icon red">🔴</div>
+                <div class="stat-info">
+                    <div class="stat-number">${supStats.overdue}</div>
+                    <div class="stat-label">超期督办</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">预警公文</span>
+                <a class="action-link" onclick="navigateTo('supervision')">查看全部 →</a>
+            </div>
+            <div class="card-body" style="padding:0;">
+                ${warningDocs.length > 0 ? `
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>文号</th>
+                                    <th>标题</th>
+                                    <th>紧急程度</th>
+                                    <th>承办科室</th>
+                                    <th>承办人</th>
+                                    <th>剩余时间</th>
+                                    <th>预警状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${warningDocs.map(doc => `
+                                    <tr>
+                                        <td>${doc.id}</td>
+                                        <td class="td-ellipsis" title="${doc.title}">${doc.title}</td>
+                                        <td>${getPriorityLabel(doc.priority)}</td>
+                                        <td>${doc.assignedDept || '-'}</td>
+                                        <td>${doc.assignedUserName || '-'}</td>
+                                        <td>${renderRemainingTime(doc)}</td>
+                                        <td><span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span></td>
+                                        <td><a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">查看</a></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                ` : '<div class="empty-state"><div class="empty-icon">✅</div><p>暂无预警公文</p></div>'}
             </div>
         </div>
 
@@ -290,6 +365,20 @@ function renderDashboard() {
     `;
 }
 
+function renderRemainingTime(doc) {
+    const remainingDays = getRemainingDays(doc);
+    if (remainingDays === null) return '-';
+
+    if (remainingDays < 0) {
+        return `<span class="overdue-text">超期 ${Math.abs(remainingDays)} 天</span>`;
+    } else if (remainingDays === 0) {
+        return `<span class="approaching-text">今日到期</span>`;
+    } else if (remainingDays === 1) {
+        return `<span class="approaching-text">剩余 1 天</span>`;
+    }
+    return `剩余 ${remainingDays} 天`;
+}
+
 function renderDocList() {
     const content = document.getElementById('contentArea');
 
@@ -370,6 +459,8 @@ function renderDocTable() {
                         <th>来文单位</th>
                         <th>紧急程度</th>
                         <th>当前状态</th>
+                        <th>剩余时间</th>
+                        <th>预警状态</th>
                         ${currentRole === ROLES.STAFF ? '<th>承办科室</th>' : ''}
                         <th>登记时间</th>
                         <th>操作</th>
@@ -383,6 +474,8 @@ function renderDocTable() {
                             <td>${doc.fromUnit}</td>
                             <td>${getPriorityLabel(doc.priority)}</td>
                             <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
+                            <td>${renderRemainingTime(doc)}</td>
+                            <td>${doc.deadline ? `<span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>` : '-'}</td>
                             ${currentRole === ROLES.STAFF ? `<td>${doc.assignedDept || '-'}</td>` : ''}
                             <td>${formatDate(doc.createdAt)}</td>
                             <td>
@@ -535,6 +628,200 @@ function renderArchiveTable() {
             </table>
         </div>
     `;
+}
+
+function renderSupervisionCenter() {
+    const content = document.getElementById('contentArea');
+    const supStats = dataStore.getSupervisionStats(currentRole, currentUser);
+
+    const warningOptions = [
+        { value: '', label: '全部预警状态' },
+        { value: WARNING_STATUS.OVERDUE, label: '超期' },
+        { value: WARNING_STATUS.APPROACHING, label: '临期' },
+        { value: WARNING_STATUS.NORMAL, label: '正常' }
+    ];
+
+    const deptOptions = [{ value: '', label: '全部科室' }];
+    DEPARTMENTS.forEach(d => {
+        if (d !== '办公室') {
+            deptOptions.push({ value: d, label: d });
+        }
+    });
+
+    const staffOptions = [{ value: '', label: '全部承办人' }];
+
+    content.innerHTML = `
+        <div class="page-header">
+            <h2 class="page-title">督办预警中心</h2>
+            ${currentRole === ROLES.OFFICE ? '<div class="page-subtitle">办公室督办管理 · 可对超期公文追加督办记录</div>' : ''}
+        </div>
+
+        <div class="stats-grid supervision-stats-grid">
+            <div class="stat-card warning-card-normal">
+                <div class="stat-icon green">🟢</div>
+                <div class="stat-info">
+                    <div class="stat-number">${supStats.normal}</div>
+                    <div class="stat-label">正常办理</div>
+                </div>
+            </div>
+            <div class="stat-card warning-card-approaching">
+                <div class="stat-icon orange">🟠</div>
+                <div class="stat-info">
+                    <div class="stat-number">${supStats.approaching}</div>
+                    <div class="stat-label">临期预警</div>
+                </div>
+            </div>
+            <div class="stat-card warning-card-overdue">
+                <div class="stat-icon red">🔴</div>
+                <div class="stat-info">
+                    <div class="stat-number">${supStats.overdue}</div>
+                    <div class="stat-label">超期督办</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="search-bar supervision-search-bar">
+                    <div class="form-group">
+                        <label class="form-label">关键词</label>
+                        <input type="text" class="form-input" id="supKeyword" placeholder="文号、标题、来文单位"
+                               onkeyup="if(event.key==='Enter') applySupervisionFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">承办科室</label>
+                        <select class="form-select" id="supDept" onchange="updateSupervisionStaffOptions(); applySupervisionFilters()">
+                            ${deptOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">承办人</label>
+                        <select class="form-select" id="supStaff" onchange="applySupervisionFilters()">
+                            ${staffOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">预警状态</label>
+                        <select class="form-select" id="supWarningStatus" onchange="applySupervisionFilters()">
+                            ${warningOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="applySupervisionFilters()">🔍 查询</button>
+                    <button class="btn btn-default" onclick="resetSupervisionFilters()">重置</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body" style="padding:0;" id="supervisionListTable">
+                ${renderSupervisionTable()}
+            </div>
+        </div>
+    `;
+}
+
+function applySupervisionFilters() {
+    currentSupervisionFilters = {
+        keyword: document.getElementById('supKeyword').value.trim(),
+        assignedDept: document.getElementById('supDept').value,
+        assignedUser: document.getElementById('supStaff').value,
+        warningStatus: document.getElementById('supWarningStatus').value
+    };
+    document.getElementById('supervisionListTable').innerHTML = renderSupervisionTable();
+}
+
+function resetSupervisionFilters() {
+    currentSupervisionFilters = {};
+    document.getElementById('supKeyword').value = '';
+    document.getElementById('supDept').value = '';
+    document.getElementById('supStaff').value = '';
+    document.getElementById('supWarningStatus').value = '';
+    document.getElementById('supervisionListTable').innerHTML = renderSupervisionTable();
+}
+
+function updateSupervisionStaffOptions() {
+    const dept = document.getElementById('supDept').value;
+    const staffSelect = document.getElementById('supStaff');
+
+    let options = '<option value="">全部承办人</option>';
+
+    if (dept) {
+        const staff = USERS[ROLES.STAFF].filter(u => u.dept === dept);
+        staff.forEach(s => {
+            options += `<option value="${s.id}">${s.name}</option>`;
+        });
+    } else {
+        USERS[ROLES.STAFF].forEach(s => {
+            options += `<option value="${s.id}">${s.name}（${s.dept}）</option>`;
+        });
+    }
+
+    staffSelect.innerHTML = options;
+}
+
+function renderSupervisionTable() {
+    const docs = dataStore.listSupervisionDocs(currentSupervisionFilters);
+
+    if (docs.length === 0) {
+        return '<div class="empty-state"><div class="empty-icon">📋</div><p>暂无符合条件的公文</p></div>';
+    }
+
+    const canSuperviseAll = currentRole === ROLES.OFFICE;
+
+    return `
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>文号</th>
+                        <th>标题</th>
+                        <th>紧急程度</th>
+                        <th>承办科室</th>
+                        <th>承办人</th>
+                        <th>当前状态</th>
+                        <th>办理期限</th>
+                        <th>剩余时间</th>
+                        <th>预警状态</th>
+                        <th>督办次数</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${docs.map(doc => `
+                        <tr class="${getWarningStatusClass(doc) ? 'row-' + getWarningStatusClass(doc) : ''}">
+                            <td>${doc.id}</td>
+                            <td class="td-ellipsis" title="${doc.title}">${doc.title}</td>
+                            <td>${getPriorityLabel(doc.priority)}</td>
+                            <td>${doc.assignedDept || '-'}</td>
+                            <td>${doc.assignedUserName || '-'}</td>
+                            <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
+                            <td>${doc.deadline ? formatDate(doc.deadline) : '-'}</td>
+                            <td>${renderRemainingTime(doc)}</td>
+                            <td>${doc.deadline ? `<span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>` : '-'}</td>
+                            <td>
+                                ${doc.supervisionRecords && doc.supervisionRecords.length > 0
+                                    ? `<span class="sup-count">${doc.supervisionRecords.length}</span>`
+                                    : '<span style="color:#999;">0</span>'}
+                            </td>
+                            <td>
+                                <div class="actions">
+                                    <a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">查看</a>
+                                    ${canSuperviseAll && doc.currentNode !== FLOW_NODES.REGISTER && !(doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)
+                                        ? `<a class="action-link action-supervise" onclick="quickSupervise('${doc.id}')">督办</a>`
+                                        : ''}
+                                </div>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function quickSupervise(docId) {
+    currentDocId = docId;
+    showSuperviseModal();
 }
 
 function renderRegisterForm() {
@@ -690,6 +977,7 @@ function renderDocDetail() {
     }
 
     const canOperate = dataStore.canOperate(doc, currentRole, currentUser) && !isArchiveDetail;
+    const canSupervise = dataStore.canSupervise(doc, currentRole, currentUser) && !isArchiveDetail;
     const content = document.getElementById('contentArea');
 
     let actionButton = '';
@@ -704,6 +992,11 @@ function renderDocDetail() {
         actionButton = `<button class="btn btn-primary" onclick="showOperateModal()">${actionLabels[doc.currentNode] || '办理'}</button>`;
     }
 
+    let superviseButton = '';
+    if (canSupervise) {
+        superviseButton = `<button class="btn btn-warning" onclick="showSuperviseModal()">📢 督办</button>`;
+    }
+
     const backPage = isArchiveDetail ? 'archive' : 'list';
     const backLabel = isArchiveDetail ? '返回归档库' : '返回列表';
 
@@ -711,6 +1004,10 @@ function renderDocDetail() {
     if (isArchiveDetail || (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)) {
         statusBadgeExtra = '<span class="archive-badge">已归档</span>';
     }
+
+    const warningBadge = doc.deadline && !isArchiveDetail && !(doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)
+        ? `<span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>`
+        : '';
 
     const registerRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.REGISTER);
     const proposeRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.PROPOSE);
@@ -721,6 +1018,7 @@ function renderDocDetail() {
             <h2 class="page-title">${isArchiveDetail ? '归档详情' : '公文详情'}</h2>
             <div>
                 <button class="btn btn-default" onclick="navigateTo('${backPage}')" style="margin-right:8px;">${backLabel}</button>
+                ${superviseButton ? superviseButton + ' ' : ''}
                 ${actionButton}
             </div>
         </div>
@@ -730,6 +1028,7 @@ function renderDocDetail() {
                 <span class="card-title">基本信息</span>
                 <div style="display:flex; align-items:center; gap:8px;">
                     ${statusBadgeExtra}
+                    ${warningBadge}
                     <span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span>
                 </div>
             </div>
@@ -762,6 +1061,13 @@ function renderDocDetail() {
                     <div class="detail-item">
                         <span class="detail-label">紧急程度</span>
                         <span class="detail-value">${getPriorityLabel(doc.priority)}</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">办理期限</span>
+                        <span class="detail-value">
+                            ${doc.deadline ? formatDate(doc.deadline) : '-'}
+                            ${doc.deadline && !isArchiveDetail && !(doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) ? `（${renderRemainingTime(doc)}）` : ''}
+                        </span>
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">登记人</span>
@@ -803,6 +1109,18 @@ function renderDocDetail() {
             </div>
         </div>
 
+        ${!isArchiveDetail && doc.supervisionRecords && doc.supervisionRecords.length > 0 ? `
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">督办记录</span>
+                <span class="badge-count">${doc.supervisionRecords.length} 条</span>
+            </div>
+            <div class="card-body">
+                ${renderSupervisionTimeline(doc)}
+            </div>
+        </div>
+        ` : ''}
+
         <div class="card">
             <div class="card-header">
                 <span class="card-title">流转记录</span>
@@ -812,6 +1130,31 @@ function renderDocDetail() {
             </div>
         </div>
     `;
+}
+
+function renderSupervisionTimeline(doc) {
+    const records = doc.supervisionRecords || [];
+    if (records.length === 0) return '';
+
+    let html = '<div class="supervision-timeline">';
+
+    records.slice().reverse().forEach(record => {
+        html += `
+            <div class="supervision-item">
+                <div class="supervision-dot">📢</div>
+                <div class="supervision-content">
+                    <div class="supervision-header">
+                        <span class="supervision-operator">${record.operatorName}（${record.operatorDept}）</span>
+                        <span class="supervision-time">${formatDateTime(record.time)}</span>
+                    </div>
+                    <div class="supervision-text">${record.content}</div>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    return html;
 }
 
 function renderTimeline(doc) {
@@ -1111,6 +1454,48 @@ function submitOperation() {
     }
 }
 
+function showSuperviseModal() {
+    const doc = dataStore.getDoc(currentDocId);
+    if (!doc) return;
+
+    document.getElementById('modalTitle').textContent = '追加督办';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>督办内容</label>
+            <textarea class="form-textarea" id="supContent" rows="5" placeholder="请输入督办内容..."></textarea>
+        </div>
+        <div class="supervision-info">
+            <p><strong>公文标题：</strong>${doc.title}</p>
+            <p><strong>当前状态：</strong>${getDocStatusLabel(doc)}</p>
+            <p><strong>剩余时间：</strong>${renderRemainingTime(doc)}</p>
+            <p><strong>承办人：</strong>${doc.assignedUserName || '未指派'}</p>
+        </div>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-warning" onclick="submitSupervision()">确认督办</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function submitSupervision() {
+    const content = document.getElementById('supContent').value.trim();
+    if (!content) {
+        showToast('请输入督办内容', 'error');
+        return;
+    }
+
+    const result = dataStore.addSupervisionRecord(currentDocId, content, currentUser);
+    if (result) {
+        closeModal();
+        showToast('督办记录已添加！');
+        renderDocDetail();
+        renderNav();
+    } else {
+        showToast('操作失败，请重试', 'error');
+    }
+}
+
 function closeModal() {
     document.getElementById('modal').classList.add('hidden');
     operateAttachments = [];
@@ -1342,7 +1727,8 @@ function getMessageIcon(type) {
         [MESSAGE_TYPES.DOC_HANDLED]: '⚙️',
         [MESSAGE_TYPES.DOC_FEEDBACK]: '📤',
         [MESSAGE_TYPES.DOC_COMPLETED]: '✅',
-        [MESSAGE_TYPES.DOC_ARCHIVED]: '📦'
+        [MESSAGE_TYPES.DOC_ARCHIVED]: '📦',
+        [MESSAGE_TYPES.SUPERVISION]: '📢'
     };
     return icons[type] || '🔔';
 }

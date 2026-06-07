@@ -56,6 +56,82 @@ const USERS = {
 
 const DEPARTMENTS = ['综合科', '业务科', '法规科', '办公室'];
 
+const PRIORITY_DAYS = {
+    'normal': 5,
+    'high': 3,
+    'urgent': 1
+};
+
+const PRIORITY_LABELS = {
+    'normal': '普通',
+    'high': '加急',
+    'urgent': '特急'
+};
+
+const WARNING_STATUS = {
+    NORMAL: 'normal',
+    APPROACHING: 'approaching',
+    OVERDUE: 'overdue'
+};
+
+const WARNING_STATUS_LABELS = {
+    [WARNING_STATUS.NORMAL]: '正常',
+    [WARNING_STATUS.APPROACHING]: '临期',
+    [WARNING_STATUS.OVERDUE]: '超期'
+};
+
+function getDeadline(doc) {
+    if (!doc.deadline) return null;
+    return doc.deadline;
+}
+
+function getRemainingDays(doc) {
+    if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
+        return null;
+    }
+    if (!doc.deadline) return null;
+
+    const now = new Date();
+    const deadline = new Date(doc.deadline);
+    const diffTime = deadline.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+}
+
+function getWarningStatus(doc) {
+    if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
+        return null;
+    }
+    const remainingDays = getRemainingDays(doc);
+    if (remainingDays === null) return null;
+
+    if (remainingDays < 0) {
+        return WARNING_STATUS.OVERDUE;
+    } else if (remainingDays <= 1) {
+        return WARNING_STATUS.APPROACHING;
+    }
+    return WARNING_STATUS.NORMAL;
+}
+
+function getWarningStatusLabel(doc) {
+    const status = getWarningStatus(doc);
+    if (status === null) return '-';
+    return WARNING_STATUS_LABELS[status];
+}
+
+function getWarningStatusClass(doc) {
+    const status = getWarningStatus(doc);
+    if (status === null) return '';
+    return `warning-${status}`;
+}
+
+function calculateDeadline(priority, assignTime) {
+    const days = PRIORITY_DAYS[priority] || PRIORITY_DAYS['normal'];
+    const baseTime = assignTime ? new Date(assignTime) : new Date();
+    const deadline = new Date(baseTime.getTime() + days * 24 * 60 * 60 * 1000);
+    return deadline.toISOString();
+}
+
 function getDocStatusLabel(doc) {
     if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
         return '已办结';
@@ -129,6 +205,22 @@ class DataStore {
                 changed = true;
             }
             doc.flowRecords = doc.flowRecords || [];
+
+            if (doc.deadline === undefined) {
+                doc.deadline = null;
+                const assignRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.ASSIGN);
+                if (assignRecord && doc.currentNode !== FLOW_NODES.COMPLETE) {
+                    doc.deadline = calculateDeadline(doc.priority, assignRecord.time);
+                } else if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
+                    doc.deadline = null;
+                }
+                changed = true;
+            }
+
+            if (doc.supervisionRecords === undefined) {
+                doc.supervisionRecords = [];
+                changed = true;
+            }
         });
         if (changed) {
             this.save();
@@ -162,10 +254,13 @@ class DataStore {
             currentNode: FLOW_NODES.PROPOSE,
             assignedDept: null,
             assignedUser: null,
+            assignedUserName: null,
+            deadline: null,
             archived: false,
             createdAt: now,
             createdBy: creator.id,
             createdByName: creator.name,
+            supervisionRecords: [],
             flowRecords: [{
                 node: FLOW_NODES.REGISTER,
                 status: NODE_STATUS.COMPLETED,
@@ -296,6 +391,7 @@ class DataStore {
         doc.assignedDept = dept;
         doc.assignedUser = userId;
         doc.assignedUserName = userName;
+        doc.deadline = calculateDeadline(doc.priority, now);
         doc.currentNode = FLOW_NODES.HANDLE;
         this.save();
 
@@ -436,6 +532,126 @@ class DataStore {
         return doc;
     }
 
+    addSupervisionRecord(docId, content, operator) {
+        const doc = this.getDoc(docId);
+        if (!doc) return null;
+
+        const now = new Date().toISOString();
+        const record = {
+            id: 'sup_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            content: content,
+            operatorId: operator.id,
+            operatorName: operator.name,
+            operatorDept: operator.dept,
+            time: now
+        };
+
+        doc.supervisionRecords = doc.supervisionRecords || [];
+        doc.supervisionRecords.push(record);
+        this.save();
+
+        if (doc.assignedUser) {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.SUPERVISION,
+                title: '督办提醒',
+                content: `《${doc.title}》收到新的督办记录，请及时处理`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toUserId: doc.assignedUser
+            });
+        }
+
+        return record;
+    }
+
+    listSupervisionDocs(filters = {}) {
+        let result = this.docs.filter(d =>
+            d.currentNode !== FLOW_NODES.REGISTER &&
+            !(d.currentNode === FLOW_NODES.COMPLETE && d.archived)
+        );
+
+        if (filters.keyword) {
+            const kw = filters.keyword.toLowerCase();
+            result = result.filter(d =>
+                d.title.toLowerCase().includes(kw) ||
+                d.id.toLowerCase().includes(kw) ||
+                d.fromUnit.toLowerCase().includes(kw)
+            );
+        }
+
+        if (filters.assignedDept) {
+            result = result.filter(d => d.assignedDept === filters.assignedDept);
+        }
+
+        if (filters.assignedUser) {
+            result = result.filter(d => d.assignedUser === filters.assignedUser);
+        }
+
+        if (filters.warningStatus) {
+            result = result.filter(d => getWarningStatus(d) === filters.warningStatus);
+        }
+
+        if (filters.currentNode) {
+            result = result.filter(d => d.currentNode === filters.currentNode);
+        }
+
+        result.sort((a, b) => {
+            const statusA = getWarningStatus(a);
+            const statusB = getWarningStatus(b);
+            const priority = { overdue: 0, approaching: 1, normal: 2, null: 3 };
+            const pA = priority[statusA] !== undefined ? priority[statusA] : 3;
+            const pB = priority[statusB] !== undefined ? priority[statusB] : 3;
+            if (pA !== pB) return pA - pB;
+            return new Date(b.createdAt) - new Date(a.createdAt);
+        });
+
+        return result;
+    }
+
+    getSupervisionStats(role, user) {
+        const stats = {
+            total: 0,
+            normal: 0,
+            approaching: 0,
+            overdue: 0,
+            myOverdue: 0
+        };
+
+        const activeDocs = this.docs.filter(d =>
+            d.currentNode !== FLOW_NODES.REGISTER &&
+            !(d.currentNode === FLOW_NODES.COMPLETE && d.archived)
+        );
+
+        activeDocs.forEach(doc => {
+            const status = getWarningStatus(doc);
+            stats.total++;
+            if (status === WARNING_STATUS.NORMAL) {
+                stats.normal++;
+            } else if (status === WARNING_STATUS.APPROACHING) {
+                stats.approaching++;
+            } else if (status === WARNING_STATUS.OVERDUE) {
+                stats.overdue++;
+            }
+
+            if (role === ROLES.STAFF && user && doc.assignedUser === user.id) {
+                if (status === WARNING_STATUS.OVERDUE) {
+                    stats.myOverdue++;
+                }
+            }
+        });
+
+        return stats;
+    }
+
+    canSupervise(doc, role, user) {
+        if (!doc || !user) return false;
+        if (doc.currentNode === FLOW_NODES.REGISTER) return false;
+        if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) return false;
+        return role === ROLES.OFFICE;
+    }
+
     getStats(role, user) {
         const stats = {
             total: this.docs.length,
@@ -509,10 +725,12 @@ class DataStore {
                 assignedDept: '综合科',
                 assignedUser: 'staff1',
                 assignedUserName: '陈科长',
+                deadline: null,
                 archived: true,
                 createdAt: new Date(now - 86400000 * 10).toISOString(),
                 createdBy: 'office1',
                 createdByName: '张秘书',
+                supervisionRecords: [],
                 flowRecords: [
                     {
                         node: FLOW_NODES.REGISTER,
@@ -591,9 +809,13 @@ class DataStore {
                 currentNode: FLOW_NODES.ASSIGN,
                 assignedDept: null,
                 assignedUser: null,
+                assignedUserName: null,
+                deadline: null,
+                archived: false,
                 createdAt: new Date(now - 86400000 * 5).toISOString(),
                 createdBy: 'office2',
                 createdByName: '李文员',
+                supervisionRecords: [],
                 flowRecords: [
                     {
                         node: FLOW_NODES.REGISTER,
@@ -630,9 +852,21 @@ class DataStore {
                 assignedDept: '业务科',
                 assignedUser: 'staff3',
                 assignedUserName: '周主任',
-                createdAt: new Date(now - 86400000 * 3).toISOString(),
+                deadline: new Date(now - 86400000 * 7).toISOString(),
+                archived: false,
+                createdAt: new Date(now - 86400000 * 12).toISOString(),
                 createdBy: 'office1',
                 createdByName: '张秘书',
+                supervisionRecords: [
+                    {
+                        id: 'sup_mock_1',
+                        content: '该文件已超期，请业务科尽快办理并说明原因。',
+                        operatorId: 'office1',
+                        operatorName: '张秘书',
+                        operatorDept: '办公室',
+                        time: new Date(now - 86400000 * 1).toISOString()
+                    }
+                ],
                 flowRecords: [
                     {
                         node: FLOW_NODES.REGISTER,
@@ -640,7 +874,7 @@ class DataStore {
                         operatorId: 'office1',
                         operatorName: '张秘书',
                         operatorDept: '办公室',
-                        time: new Date(now - 86400000 * 3).toISOString(),
+                        time: new Date(now - 86400000 * 12).toISOString(),
                         comment: '收文登记',
                         attachments: []
                     },
@@ -650,7 +884,7 @@ class DataStore {
                         operatorId: 'leader1',
                         operatorName: '王局长',
                         operatorDept: '局领导',
-                        time: new Date(now - 86400000 * 2.5).toISOString(),
+                        time: new Date(now - 86400000 * 11.5).toISOString(),
                         comment: '请业务科牵头落实。',
                         attachments: []
                     },
@@ -660,7 +894,7 @@ class DataStore {
                         operatorId: 'leader1',
                         operatorName: '王局长',
                         operatorDept: '局领导',
-                        time: new Date(now - 86400000 * 2.5).toISOString(),
+                        time: new Date(now - 86400000 * 11.5).toISOString(),
                         comment: '交由业务科周主任办理。',
                         attachments: [],
                         assignedDept: '业务科',
@@ -682,9 +916,12 @@ class DataStore {
                 assignedDept: '综合科',
                 assignedUser: 'staff2',
                 assignedUserName: '刘干事',
-                createdAt: new Date(now - 86400000 * 2).toISOString(),
+                deadline: new Date(now + 86400000 * 0.5).toISOString(),
+                archived: false,
+                createdAt: new Date(now - 86400000 * 5).toISOString(),
                 createdBy: 'office2',
                 createdByName: '李文员',
+                supervisionRecords: [],
                 flowRecords: [
                     {
                         node: FLOW_NODES.REGISTER,
@@ -692,7 +929,7 @@ class DataStore {
                         operatorId: 'office2',
                         operatorName: '李文员',
                         operatorDept: '办公室',
-                        time: new Date(now - 86400000 * 2).toISOString(),
+                        time: new Date(now - 86400000 * 5).toISOString(),
                         comment: '收文登记',
                         attachments: []
                     },
@@ -702,7 +939,7 @@ class DataStore {
                         operatorId: 'leader1',
                         operatorName: '王局长',
                         operatorDept: '局领导',
-                        time: new Date(now - 86400000 * 1.8).toISOString(),
+                        time: new Date(now - 86400000 * 4.5).toISOString(),
                         comment: '请综合科按时报送。',
                         attachments: []
                     },
@@ -712,7 +949,7 @@ class DataStore {
                         operatorId: 'leader1',
                         operatorName: '王局长',
                         operatorDept: '局领导',
-                        time: new Date(now - 86400000 * 1.8).toISOString(),
+                        time: new Date(now - 86400000 * 4.5).toISOString(),
                         comment: '交由综合科刘干事办理。',
                         attachments: [],
                         assignedDept: '综合科',
@@ -725,7 +962,7 @@ class DataStore {
                         operatorId: 'staff2',
                         operatorName: '刘干事',
                         operatorDept: '综合科',
-                        time: new Date(now - 86400000 * 1).toISOString(),
+                        time: new Date(now - 86400000 * 2).toISOString(),
                         comment: '已完成报表数据的统计和整理工作。',
                         attachments: [{ name: '月度数据统计.xlsx', size: '89KB' }]
                     }
@@ -743,9 +980,13 @@ class DataStore {
                 currentNode: FLOW_NODES.PROPOSE,
                 assignedDept: null,
                 assignedUser: null,
+                assignedUserName: null,
+                deadline: null,
+                archived: false,
                 createdAt: new Date(now - 86400000 * 0.5).toISOString(),
                 createdBy: 'office1',
                 createdByName: '张秘书',
+                supervisionRecords: [],
                 flowRecords: [
                     {
                         node: FLOW_NODES.REGISTER,
@@ -756,6 +997,125 @@ class DataStore {
                         time: new Date(now - 86400000 * 0.5).toISOString(),
                         comment: '急件，特急办理！',
                         attachments: []
+                    }
+                ]
+            },
+            {
+                id: 'GW-2025-0006',
+                title: '关于加强信息化建设工作的意见',
+                fromUnit: '市大数据发展管理局',
+                docNumber: '市数发〔2025〕8号',
+                docDate: '2025-02-28',
+                priority: 'high',
+                category: '意见',
+                content: '各单位：\n\n为加快推进我市政务信息化建设，提升政务服务水平，现就加强信息化建设工作提出以下意见...',
+                currentNode: FLOW_NODES.HANDLE,
+                assignedDept: '法规科',
+                assignedUser: 'staff5',
+                assignedUserName: '郑科长',
+                deadline: new Date(now - 86400000 * 2).toISOString(),
+                archived: false,
+                createdAt: new Date(now - 86400000 * 7).toISOString(),
+                createdBy: 'office2',
+                createdByName: '李文员',
+                supervisionRecords: [
+                    {
+                        id: 'sup_mock_2',
+                        content: '加急件即将到期，请法规科加快办理进度。',
+                        operatorId: 'office1',
+                        operatorName: '张秘书',
+                        operatorDept: '办公室',
+                        time: new Date(now - 86400000 * 0.5).toISOString()
+                    }
+                ],
+                flowRecords: [
+                    {
+                        node: FLOW_NODES.REGISTER,
+                        status: 'completed',
+                        operatorId: 'office2',
+                        operatorName: '李文员',
+                        operatorDept: '办公室',
+                        time: new Date(now - 86400000 * 7).toISOString(),
+                        comment: '收文登记',
+                        attachments: []
+                    },
+                    {
+                        node: FLOW_NODES.PROPOSE,
+                        status: 'completed',
+                        operatorId: 'leader1',
+                        operatorName: '王局长',
+                        operatorDept: '局领导',
+                        time: new Date(now - 86400000 * 6).toISOString(),
+                        comment: '请法规科牵头研究，提出落实意见。',
+                        attachments: []
+                    },
+                    {
+                        node: FLOW_NODES.ASSIGN,
+                        status: 'completed',
+                        operatorId: 'leader1',
+                        operatorName: '王局长',
+                        operatorDept: '局领导',
+                        time: new Date(now - 86400000 * 5).toISOString(),
+                        comment: '交由法规科郑科长办理。',
+                        attachments: [],
+                        assignedDept: '法规科',
+                        assignedUserId: 'staff5',
+                        assignedUserName: '郑科长'
+                    }
+                ]
+            },
+            {
+                id: 'GW-2025-0007',
+                title: '关于做好2025年度预算编制工作的通知',
+                fromUnit: '市财政局',
+                docNumber: '市财预〔2025〕15号',
+                docDate: '2025-03-02',
+                priority: 'normal',
+                category: '通知',
+                content: '各预算单位：\n\n根据《预算法》有关规定，现就做好2025年度部门预算编制工作通知如下...',
+                currentNode: FLOW_NODES.HANDLE,
+                assignedDept: '综合科',
+                assignedUser: 'staff1',
+                assignedUserName: '陈科长',
+                deadline: new Date(now + 86400000 * 3).toISOString(),
+                archived: false,
+                createdAt: new Date(now - 86400000 * 2).toISOString(),
+                createdBy: 'office1',
+                createdByName: '张秘书',
+                supervisionRecords: [],
+                flowRecords: [
+                    {
+                        node: FLOW_NODES.REGISTER,
+                        status: 'completed',
+                        operatorId: 'office1',
+                        operatorName: '张秘书',
+                        operatorDept: '办公室',
+                        time: new Date(now - 86400000 * 2).toISOString(),
+                        comment: '收文登记',
+                        attachments: [{ name: '预算编制说明.pdf', size: '320KB' }]
+                    },
+                    {
+                        node: FLOW_NODES.PROPOSE,
+                        status: 'completed',
+                        operatorId: 'leader2',
+                        operatorName: '赵副局长',
+                        operatorDept: '局领导',
+                        time: new Date(now - 86400000 * 1.5).toISOString(),
+                        comment: '请综合科牵头，各科室配合做好预算编制工作。',
+                        attachments: []
+                    },
+                    {
+                        node: FLOW_NODES.ASSIGN,
+                        status: 'completed',
+                        operatorId: 'leader2',
+                        operatorName: '赵副局长',
+                        operatorDept: '局领导',
+                        time: new Date(now - 86400000 * 1.5).toISOString(),
+                        comment: '交由综合科陈科长负责办理。',
+                        attachments: [],
+                        assignedDept: '综合科',
+                        assignedUserId: 'staff1',
+                        assignedUserName: '陈科长'
                     }
                 ]
             }
@@ -886,7 +1246,8 @@ const MESSAGE_TYPES = {
     DOC_HANDLED: 'doc_handled',
     DOC_FEEDBACK: 'doc_feedback',
     DOC_COMPLETED: 'doc_completed',
-    DOC_ARCHIVED: 'doc_archived'
+    DOC_ARCHIVED: 'doc_archived',
+    SUPERVISION: 'supervision'
 };
 
 const MESSAGE_TYPE_LABELS = {
@@ -895,7 +1256,8 @@ const MESSAGE_TYPE_LABELS = {
     [MESSAGE_TYPES.DOC_HANDLED]: '办理中',
     [MESSAGE_TYPES.DOC_FEEDBACK]: '已反馈',
     [MESSAGE_TYPES.DOC_COMPLETED]: '待归档',
-    [MESSAGE_TYPES.DOC_ARCHIVED]: '已归档'
+    [MESSAGE_TYPES.DOC_ARCHIVED]: '已归档',
+    [MESSAGE_TYPES.SUPERVISION]: '督办'
 };
 
 const MESSAGE_STORAGE_KEY = 'doc_flow_messages';
