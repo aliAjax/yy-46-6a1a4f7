@@ -683,3 +683,115 @@ class DataStore {
 
 const dataStore = new DataStore();
 dataStore.initMockData();
+
+const TEMPLATE_TYPES = {
+    PROPOSE: 'propose',
+    ASSIGN: 'assign',
+    HANDLE: 'handle',
+    FEEDBACK: 'feedback'
+};
+
+const TEMPLATE_TYPE_LABELS = {
+    [TEMPLATE_TYPES.PROPOSE]: '批示意见',
+    [TEMPLATE_TYPES.ASSIGN]: '分办意见',
+    [TEMPLATE_TYPES.HANDLE]: '办理意见',
+    [TEMPLATE_TYPES.FEEDBACK]: '反馈意见'
+};
+
+const TEMPLATE_STORAGE_KEY = 'doc_flow_templates';
+
+class TemplateStore {
+    constructor() {
+        this.templates = {};
+        this.load();
+    }
+
+    load() {
+        const data = localStorage.getItem(TEMPLATE_STORAGE_KEY);
+        if (data) {
+            try {
+                this.templates = JSON.parse(data);
+            } catch (e) {
+                this.templates = {};
+            }
+        }
+    }
+
+    save() {
+        localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(this.templates));
+    }
+
+    getUserTemplates(userId, type = null) {
+        const userTemplates = this.templates[userId] || [];
+        if (type) {
+            return userTemplates
+                .filter(t => t.type === type)
+                .sort((a, b) => b.useCount - a.useCount || b.createdAt - a.createdAt);
+        }
+        return userTemplates.sort((a, b) => b.useCount - a.useCount || b.createdAt - a.createdAt);
+    }
+
+    addTemplate(userId, templateData) {
+        if (!this.templates[userId]) {
+            this.templates[userId] = [];
+        }
+        const template = {
+            id: 'tpl_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            title: templateData.title,
+            content: templateData.content,
+            type: templateData.type,
+            useCount: 0,
+            createdAt: Date.now()
+        };
+        this.templates[userId].push(template);
+        this.save();
+        return template;
+    }
+
+    deleteTemplate(userId, templateId) {
+        if (!this.templates[userId]) return false;
+        const index = this.templates[userId].findIndex(t => t.id === templateId);
+        if (index === -1) return false;
+        this.templates[userId].splice(index, 1);
+        this.save();
+        return true;
+    }
+
+    useTemplate(userId, templateId) {
+        if (!this.templates[userId]) return null;
+        const template = this.templates[userId].find(t => t.id === templateId);
+        if (!template) return null;
+        template.useCount = (template.useCount || 0) + 1;
+        this.save();
+        return template;
+    }
+
+    initMockTemplates() {
+        const hasAny = Object.keys(this.templates).some(k => this.templates[k].length > 0);
+        if (hasAny) return;
+
+        this.templates = {
+            leader1: [
+                { id: 'tpl_l1_1', title: '请相关科室研究办理', content: '请相关科室认真研究，按要求办理落实。', type: TEMPLATE_TYPES.PROPOSE, useCount: 5, createdAt: Date.now() - 86400000 * 10 },
+                { id: 'tpl_l1_2', title: '请综合科牵头办理', content: '请综合科牵头，会同相关科室研究办理，及时反馈结果。', type: TEMPLATE_TYPES.PROPOSE, useCount: 3, createdAt: Date.now() - 86400000 * 8 },
+                { id: 'tpl_l1_3', title: '同意，按程序办理', content: '同意，按程序办理。', type: TEMPLATE_TYPES.ASSIGN, useCount: 8, createdAt: Date.now() - 86400000 * 5 },
+                { id: 'tpl_l1_4', title: '请业务科承办', content: '请业务科负责承办，按要求推进相关工作。', type: TEMPLATE_TYPES.ASSIGN, useCount: 2, createdAt: Date.now() - 86400000 * 3 }
+            ],
+            leader2: [
+                { id: 'tpl_l2_1', title: '请王局长阅示', content: '此件重要，请王局长阅示。', type: TEMPLATE_TYPES.PROPOSE, useCount: 4, createdAt: Date.now() - 86400000 * 7 }
+            ],
+            staff1: [
+                { id: 'tpl_s1_1', title: '已按要求办理', content: '已按要求完成相关工作，现报送办理结果。', type: TEMPLATE_TYPES.HANDLE, useCount: 6, createdAt: Date.now() - 86400000 * 6 },
+                { id: 'tpl_s1_2', title: '工作进展顺利', content: '各项工作正在有序推进，总体进展顺利。', type: TEMPLATE_TYPES.HANDLE, useCount: 2, createdAt: Date.now() - 86400000 * 4 },
+                { id: 'tpl_s1_3', title: '办理完成，请审阅', content: '已完成全部办理工作，相关材料已整理完毕，请领导审阅。', type: TEMPLATE_TYPES.FEEDBACK, useCount: 4, createdAt: Date.now() - 86400000 * 2 }
+            ],
+            staff3: [
+                { id: 'tpl_s3_1', title: '业务办理标准模板', content: '已按照业务规范和相关要求完成办理工作，具体情况如下：\n一、办理情况\n二、主要成效\n三、下一步计划', type: TEMPLATE_TYPES.HANDLE, useCount: 3, createdAt: Date.now() - 86400000 * 5 }
+            ]
+        };
+        this.save();
+    }
+}
+
+const templateStore = new TemplateStore();
+templateStore.initMockTemplates();

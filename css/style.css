@@ -851,3 +851,154 @@ body {
         padding: 24px;
     }
 }
+
+/* Template Filter Bar */
+.template-filter-bar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+/* Template List */
+.template-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.template-item {
+    padding: 16px 20px;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background 0.2s;
+}
+
+.template-item:last-child {
+    border-bottom: none;
+}
+
+.template-item:hover {
+    background: #fafafa;
+}
+
+.template-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.template-item-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.template-title-text {
+    font-weight: 600;
+    color: #333;
+    font-size: 14px;
+}
+
+.template-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.template-use-count {
+    font-size: 12px;
+    color: #999;
+}
+
+.template-item-content {
+    color: #666;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    padding-left: 2px;
+}
+
+/* Template Type Tag */
+.template-type-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.template-type-tag.propose {
+    background: #e6f7ff;
+    color: #1890ff;
+}
+
+.template-type-tag.assign {
+    background: #fff7e6;
+    color: #fa8c16;
+}
+
+.template-type-tag.handle {
+    background: #f6ffed;
+    color: #52c41a;
+}
+
+.template-type-tag.feedback {
+    background: #f9f0ff;
+    color: #722ed1;
+}
+
+/* Template Selector in Modal */
+.template-selector {
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: #fafafa;
+    border-radius: 8px;
+    border: 1px solid #f0f0f0;
+}
+
+.template-selector-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #333;
+}
+
+.template-selector-hint {
+    font-size: 12px;
+    color: #999;
+    font-weight: normal;
+}
+
+.template-selector-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.template-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 14px;
+    background: white;
+    border: 1px solid #d9d9d9;
+    border-radius: 16px;
+    font-size: 13px;
+    color: #555;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+
+.template-chip:hover {
+    border-color: #c41e3a;
+    color: #c41e3a;
+    background: #fff5f5;
+}
+
+.template-chip:active {
+    transform: scale(0.98);
+}
