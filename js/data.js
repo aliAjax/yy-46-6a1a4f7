@@ -767,6 +767,7 @@ class DataStore {
         }
 
         const now = new Date().toISOString();
+        const isResubmit = doc.isReturned;
 
         if (doc.isMultiDept) {
             const mainHandler = getMainHandler(doc);
@@ -778,7 +779,7 @@ class DataStore {
             }
         }
 
-        doc.flowRecords.push({
+        const flowRecord = {
             node: FLOW_NODES.FEEDBACK,
             status: NODE_STATUS.COMPLETED,
             operatorId: operator.id,
@@ -787,7 +788,31 @@ class DataStore {
             time: now,
             comment: comment,
             attachments: attachments || []
-        });
+        };
+
+        if (isResubmit) {
+            flowRecord.isResubmit = true;
+            flowRecord.resubmitToNode = FLOW_NODES.COMPLETE;
+
+            const resubmitRecord = {
+                id: 'ret_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                type: RETURN_TYPES.RESUBMIT,
+                fromNode: FLOW_NODES.FEEDBACK,
+                toNode: FLOW_NODES.COMPLETE,
+                reason: comment,
+                operatorId: operator.id,
+                operatorName: operator.name,
+                operatorDept: operator.dept,
+                time: now
+            };
+
+            doc.returnRecords = doc.returnRecords || [];
+            doc.returnRecords.push(resubmitRecord);
+
+            doc.isReturned = false;
+        }
+
+        doc.flowRecords.push(flowRecord);
 
         doc.currentNode = FLOW_NODES.COMPLETE;
         this.save();
@@ -1285,28 +1310,29 @@ class DataStore {
         return doc;
     }
 
-    resubmitDoc(docId, comment, operator, role) {
+    resubmitRegisterDoc(docId, docData, operator, role) {
         const doc = this.getDoc(docId);
         if (!doc || !this.canResubmit(doc, role, operator)) return null;
+        if (doc.currentNode !== FLOW_NODES.REGISTER) return null;
 
         const now = new Date().toISOString();
         const fromNode = doc.currentNode;
-        let toNode = null;
+        const toNode = FLOW_NODES.PROPOSE;
 
-        if (doc.currentNode === FLOW_NODES.REGISTER) {
-            toNode = FLOW_NODES.PROPOSE;
-        } else if (doc.currentNode === FLOW_NODES.FEEDBACK) {
-            toNode = FLOW_NODES.COMPLETE;
-        }
-
-        if (!toNode) return null;
+        if (docData.title !== undefined) doc.title = docData.title;
+        if (docData.fromUnit !== undefined) doc.fromUnit = docData.fromUnit;
+        if (docData.docNumber !== undefined) doc.docNumber = docData.docNumber;
+        if (docData.docDate !== undefined) doc.docDate = docData.docDate;
+        if (docData.priority !== undefined) doc.priority = docData.priority;
+        if (docData.category !== undefined) doc.category = docData.category;
+        if (docData.content !== undefined) doc.content = docData.content;
 
         const resubmitRecord = {
             id: 'ret_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
             type: RETURN_TYPES.RESUBMIT,
             fromNode: fromNode,
             toNode: toNode,
-            reason: comment,
+            reason: docData.comment || '补充登记后重提',
             operatorId: operator.id,
             operatorName: operator.name,
             operatorDept: operator.dept,
@@ -1323,8 +1349,8 @@ class DataStore {
             operatorName: operator.name,
             operatorDept: operator.dept,
             time: now,
-            comment: comment,
-            attachments: [],
+            comment: docData.comment || '补充登记后重提',
+            attachments: docData.attachments || [],
             isResubmit: true,
             resubmitToNode: toNode
         });
@@ -1334,29 +1360,16 @@ class DataStore {
 
         this.save();
 
-        if (toNode === FLOW_NODES.PROPOSE) {
-            messageStore.createMessage({
-                type: MESSAGE_TYPES.DOC_RESUBMITTED,
-                title: '公文已重提',
-                content: `《${doc.title}》已补充登记并重提，请批示`,
-                docId: doc.id,
-                docTitle: doc.title,
-                fromUserId: operator.id,
-                fromUserName: operator.name,
-                toRole: ROLES.LEADER
-            });
-        } else if (toNode === FLOW_NODES.COMPLETE) {
-            messageStore.createMessage({
-                type: MESSAGE_TYPES.DOC_RESUBMITTED,
-                title: '公文已重提',
-                content: `《${doc.title}》已补充反馈并重提，请归档`,
-                docId: doc.id,
-                docTitle: doc.title,
-                fromUserId: operator.id,
-                fromUserName: operator.name,
-                toRole: ROLES.OFFICE
-            });
-        }
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.DOC_RESUBMITTED,
+            title: '公文已重提',
+            content: `《${doc.title}》已补充登记并重提，请批示`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toRole: ROLES.LEADER
+        });
 
         return doc;
     }

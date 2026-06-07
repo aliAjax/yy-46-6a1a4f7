@@ -2383,44 +2383,112 @@ function submitReturn() {
     }
 }
 
+let resubmitAttachments = [];
+
 function showResubmitModal() {
     const doc = dataStore.getDoc(currentDocId);
     if (!doc) return;
 
-    let resubmitTarget = '';
-    let label = '';
-    let placeholder = '';
-    let tipText = '';
-
-    if (doc.currentNode === FLOW_NODES.REGISTER) {
-        resubmitTarget = '拟办环节';
-        label = '补充说明';
-        placeholder = '请输入补充登记说明...';
-        tipText = '重提后，公文将重新进入拟办环节，由领导批示。';
-    } else if (doc.currentNode === FLOW_NODES.FEEDBACK) {
-        resubmitTarget = '待归档环节';
-        label = '补充反馈意见';
-        placeholder = '请输入补充反馈意见...';
-        tipText = '重提后，公文将重新进入待归档环节，由办公室归档。';
-    }
+    resubmitAttachments = [];
 
     const lastReturnRecord = doc.returnRecords && doc.returnRecords.length > 0
         ? doc.returnRecords.filter(r => r.type === RETURN_TYPES.RETURN).slice(-1)[0]
         : null;
 
-    document.getElementById('modalTitle').textContent = '重提公文';
-    document.getElementById('modalBody').innerHTML = `
-        ${lastReturnRecord ? `
-        <div class="return-reason-box">
-            <div class="return-reason-title">📌 退回原因（${lastReturnRecord.operatorName} · ${formatDateTime(lastReturnRecord.time)}）</div>
-            <div class="return-reason-content">${lastReturnRecord.reason}</div>
-        </div>
-        ` : ''}
-        <div class="form-group">
-            <label class="form-label"><span class="required">*</span>${label}</label>
-            <textarea class="form-textarea" id="resubmitComment" rows="5" placeholder="${placeholder}"></textarea>
-        </div>
-        <p style="color:#888; font-size:12px;">${tipText}</p>
+    let bodyHtml = '';
+    let title = '';
+
+    if (doc.currentNode === FLOW_NODES.REGISTER) {
+        title = '补充登记并重提';
+        const priorityOptions = ['normal', 'high', 'urgent'];
+        const priorityLabels = { normal: '普通', high: '加急', urgent: '特急' };
+        const categoryOptions = ['', '通知', '请示', '报告', '批复', '函', '会议纪要', '其他'];
+
+        bodyHtml = `
+            ${lastReturnRecord ? `
+            <div class="return-reason-box" style="margin-bottom:20px;">
+                <div class="return-reason-title">📌 退回原因（${lastReturnRecord.operatorName} · ${formatDateTime(lastReturnRecord.time)}）</div>
+                <div class="return-reason-content">${lastReturnRecord.reason}</div>
+            </div>
+            ` : ''}
+            <div class="detail-grid">
+                <div class="form-group">
+                    <label class="form-label"><span class="required">*</span>公文标题</label>
+                    <input type="text" class="form-input" id="resubmitTitle" value="${escapeHtml(doc.title)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label"><span class="required">*</span>来文单位</label>
+                    <input type="text" class="form-input" id="resubmitFromUnit" value="${escapeHtml(doc.fromUnit || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">来文字号</label>
+                    <input type="text" class="form-input" id="resubmitDocNumber" value="${escapeHtml(doc.docNumber || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">来文日期</label>
+                    <input type="date" class="form-input" id="resubmitDocDate" value="${doc.docDate || ''}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">紧急程度</label>
+                    <select class="form-select" id="resubmitPriority">
+                        ${priorityOptions.map(p => `<option value="${p}" ${doc.priority === p ? 'selected' : ''}>${priorityLabels[p]}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">公文类别</label>
+                    <select class="form-select" id="resubmitCategory">
+                        ${categoryOptions.map(c => `<option value="${c}" ${doc.category === c ? 'selected' : ''}>${c || '请选择'}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group full-width">
+                    <label class="form-label">公文内容摘要</label>
+                    <textarea class="form-textarea" id="resubmitContent" rows="4">${escapeHtml(doc.content || '')}</textarea>
+                </div>
+                <div class="form-group full-width">
+                    <label class="form-label">附件上传</label>
+                    <div class="upload-area" onclick="document.getElementById('resubmitAttachmentsInput').click()">
+                        <div class="upload-icon">📎</div>
+                        <div class="upload-text">点击上传附件，或拖拽文件到此处</div>
+                        <input type="file" id="resubmitAttachmentsInput" multiple onchange="handleResubmitFileSelect(this)">
+                    </div>
+                    <div class="attachment-list" id="resubmitAttachmentsList" style="margin-top:12px;"></div>
+                </div>
+            </div>
+            <p style="color:#888; font-size:12px; margin-top:12px;">补充登记后，公文将重新进入拟办环节，由领导批示。</p>
+        `;
+    } else if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+        title = '补充反馈并重提';
+        const isMulti = doc.isMultiDept;
+        const label = isMulti ? '最终反馈意见' : '反馈意见';
+        const placeholder = isMulti ? '请输入最终办理结果反馈...' : '请输入办理结果反馈...';
+        const tipText = '补充反馈后，公文将重新进入待归档环节，由办公室归档。';
+
+        bodyHtml = `
+            ${lastReturnRecord ? `
+            <div class="return-reason-box" style="margin-bottom:20px;">
+                <div class="return-reason-title">📌 退回原因（${lastReturnRecord.operatorName} · ${formatDateTime(lastReturnRecord.time)}）</div>
+                <div class="return-reason-content">${lastReturnRecord.reason}</div>
+            </div>
+            ` : ''}
+            <div class="form-group">
+                <label class="form-label"><span class="required">*</span>${label}</label>
+                <textarea class="form-textarea" id="resubmitComment" rows="5" placeholder="${placeholder}"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">反馈附件</label>
+                <div class="upload-area" onclick="document.getElementById('resubmitAttachmentsInput').click()">
+                    <div class="upload-icon">📎</div>
+                    <div class="upload-text">点击上传反馈相关附件</div>
+                    <input type="file" id="resubmitAttachmentsInput" multiple onchange="handleResubmitFileSelect(this)">
+                </div>
+                <div class="attachment-list" id="resubmitAttachmentsList" style="margin-top:12px;"></div>
+            </div>
+            <p style="color:#888; font-size:12px;">${tipText}</p>
+        `;
+    }
+
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalBody').innerHTML = bodyHtml + `
         <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
             <button class="btn btn-default" onclick="closeModal()">取消</button>
             <button class="btn btn-primary" onclick="submitResubmit()">确认重提</button>
@@ -2429,14 +2497,78 @@ function showResubmitModal() {
     document.getElementById('modal').classList.remove('hidden');
 }
 
+function handleResubmitFileSelect(input) {
+    const files = input.files;
+    const list = document.getElementById('resubmitAttachmentsList');
+
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const attachment = {
+            name: file.name,
+            size: formatFileSize(file.size),
+            id: 'att_' + Date.now() + '_' + i
+        };
+        resubmitAttachments.push(attachment);
+
+        const item = document.createElement('div');
+        item.className = 'attachment-item';
+        item.innerHTML = `
+            <span class="attachment-icon">📄</span>
+            <span class="attachment-name">${attachment.name}</span>
+            <span class="attachment-size">${attachment.size}</span>
+            <button type="button" class="attachment-remove" onclick="removeResubmitAttachment('${attachment.id}', this)">×</button>
+        `;
+        list.appendChild(item);
+    }
+}
+
+function removeResubmitAttachment(id, btn) {
+    resubmitAttachments = resubmitAttachments.filter(a => a.id !== id);
+    btn.parentElement.remove();
+}
+
 function submitResubmit() {
-    const comment = document.getElementById('resubmitComment').value.trim();
-    if (!comment) {
-        showToast('请输入补充说明', 'error');
-        return;
+    const doc = dataStore.getDoc(currentDocId);
+    if (!doc) return;
+
+    let result = null;
+
+    if (doc.currentNode === FLOW_NODES.REGISTER) {
+        const title = document.getElementById('resubmitTitle').value.trim();
+        const fromUnit = document.getElementById('resubmitFromUnit').value.trim();
+
+        if (!title) {
+            showToast('请输入公文标题', 'error');
+            return;
+        }
+        if (!fromUnit) {
+            showToast('请输入来文单位', 'error');
+            return;
+        }
+
+        const docData = {
+            title: title,
+            fromUnit: fromUnit,
+            docNumber: document.getElementById('resubmitDocNumber').value.trim(),
+            docDate: document.getElementById('resubmitDocDate').value,
+            priority: document.getElementById('resubmitPriority').value,
+            category: document.getElementById('resubmitCategory').value,
+            content: document.getElementById('resubmitContent').value.trim(),
+            attachments: resubmitAttachments,
+            comment: '补充登记后重提'
+        };
+
+        result = dataStore.resubmitRegisterDoc(currentDocId, docData, currentUser, currentRole);
+    } else if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+        const comment = document.getElementById('resubmitComment').value.trim();
+        if (!comment) {
+            showToast('请输入反馈意见', 'error');
+            return;
+        }
+
+        result = dataStore.feedbackDoc(currentDocId, comment, resubmitAttachments, currentUser);
     }
 
-    const result = dataStore.resubmitDoc(currentDocId, comment, currentUser, currentRole);
     if (result) {
         closeModal();
         showToast('重提成功！');
