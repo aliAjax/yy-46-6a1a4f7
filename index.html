@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>政府机关公文流转系统</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app">
+        <header id="header" class="hidden">
+            <div class="header-inner">
+                <div class="logo">
+                    <span class="logo-icon">📄</span>
+                    <h1>公文流转系统</h1>
+                </div>
+                <div class="user-info">
+                    <span class="user-role" id="userRoleLabel"></span>
+                    <span class="user-name" id="userNameLabel"></span>
+                    <button class="btn btn-outline btn-sm" onclick="logout()">退出</button>
+                </div>
+            </div>
+            <nav id="navMenu" class="nav-menu"></nav>
+        </header>
+
+        <main id="mainContent">
+            <div id="loginPage" class="login-page">
+                <div class="login-card">
+                    <div class="login-header">
+                        <span class="login-icon">📋</span>
+                        <h2>政府机关公文流转系统</h2>
+                        <p class="login-subtitle">请选择身份登录</p>
+                    </div>
+                    <div class="login-roles">
+                        <div class="role-card" onclick="login('office')">
+                            <div class="role-icon">🏢</div>
+                            <div class="role-name">办公室人员</div>
+                            <div class="role-desc">负责收文登记、归档办结</div>
+                        </div>
+                        <div class="role-card" onclick="login('leader')">
+                            <div class="role-icon">👔</div>
+                            <div class="role-name">领导</div>
+                            <div class="role-desc">负责批示意见、分派承办</div>
+                        </div>
+                        <div class="role-card" onclick="login('staff')">
+                            <div class="role-icon">👨‍💼</div>
+                            <div class="role-name">科室承办人</div>
+                            <div class="role-desc">负责办理、反馈办理结果</div>
+                        </div>
+                    </div>
+                    <div class="login-user-select">
+                        <label>选择具体用户：</label>
+                        <select id="userSelect" class="form-input"></select>
+                    </div>
+                </div>
+            </div>
+
+            <div id="contentArea" class="content-area hidden"></div>
+        </main>
+
+        <div id="modal" class="modal hidden">
+            <div class="modal-overlay" onclick="closeModal()"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modalTitle">标题</h3>
+                    <button class="modal-close" onclick="closeModal()">×</button>
+                </div>
+                <div class="modal-body" id="modalBody"></div>
+            </div>
+        </div>
+
+        <div id="toast" class="toast hidden"></div>
+    </div>
+
+    <script src="js/data.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
