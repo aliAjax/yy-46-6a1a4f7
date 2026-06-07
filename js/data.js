@@ -1630,12 +1630,14 @@ class ImportBatchStore {
             errors.push('来文单位不能为空');
         }
 
-        if (itemData.docDate) {
+        if (!itemData.docDate || itemData.docDate.trim() === '') {
+            errors.push('来文日期不能为空');
+        } else {
             const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-            if (!dateRegex.test(itemData.docDate)) {
+            if (!dateRegex.test(itemData.docDate.trim())) {
                 errors.push('来文日期格式不正确，应为 YYYY-MM-DD');
             } else {
-                const d = new Date(itemData.docDate);
+                const d = new Date(itemData.docDate.trim());
                 if (isNaN(d.getTime())) {
                     errors.push('来文日期无效');
                 }
@@ -1643,7 +1645,9 @@ class ImportBatchStore {
         }
 
         const validPriorities = ['normal', 'high', 'urgent'];
-        if (itemData.priority && !validPriorities.includes(itemData.priority)) {
+        if (!itemData.priority || itemData.priority.trim() === '') {
+            errors.push('紧急程度不能为空');
+        } else if (!validPriorities.includes(itemData.priority.trim())) {
             const priorityMap = {
                 '普通': 'normal',
                 '加急': 'high',
@@ -1651,11 +1655,13 @@ class ImportBatchStore {
                 '一般': 'normal',
                 '紧急': 'urgent'
             };
-            if (priorityMap[itemData.priority]) {
-                itemData.priority = priorityMap[itemData.priority];
+            if (priorityMap[itemData.priority.trim()]) {
+                itemData.priority = priorityMap[itemData.priority.trim()];
             } else {
                 errors.push('紧急程度不正确，应为普通/加急/特急');
             }
+        } else {
+            itemData.priority = itemData.priority.trim();
         }
 
         if (itemData.docNumber && itemData.docNumber.trim() !== '') {
