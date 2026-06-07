@@ -171,8 +171,17 @@ function renderDashboard() {
             .slice(0, 5);
     } else if (currentRole === ROLES.STAFF) {
         pendingList = dataStore.listDocs()
-            .filter(d => (d.currentNode === FLOW_NODES.HANDLE || d.currentNode === FLOW_NODES.FEEDBACK)
-                && d.assignedUser === currentUser.id)
+            .filter(d => {
+                const handlerRecord = getHandlerRecord(d, currentUser.id);
+                if (!handlerRecord || handlerRecord.status !== HANDLE_STATUS.PENDING) {
+                    return false;
+                }
+                if (handlerRecord.type === HANDLE_TYPES.MAIN) {
+                    return d.currentNode === FLOW_NODES.HANDLE || d.currentNode === FLOW_NODES.FEEDBACK;
+                } else {
+                    return d.currentNode === FLOW_NODES.HANDLE;
+                }
+            })
             .slice(0, 5);
     }
 
@@ -411,6 +420,12 @@ function renderDocList() {
     let deptOptions = [{ value: '', label: '全部科室' }];
     DEPARTMENTS.forEach(d => deptOptions.push({ value: d, label: d }));
 
+    const modeOptions = [
+        { value: '', label: '全部办理方式' },
+        { value: 'single', label: '单科室承办' },
+        { value: 'multi', label: '多科室协办' }
+    ];
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">公文列表</h2>
@@ -431,6 +446,12 @@ function renderDocList() {
                             ${statusOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">办理方式</label>
+                        <select class="form-select" id="searchMode" onchange="applyFilters()">
+                            ${modeOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                        </select>
+                    </div>
                     <button class="btn btn-primary" onclick="applyFilters()">🔍 查询</button>
                     <button class="btn btn-default" onclick="resetFilters()">重置</button>
                 </div>
@@ -446,9 +467,18 @@ function renderDocList() {
 }
 
 function applyFilters() {
+    const modeVal = document.getElementById('searchMode').value;
+    let isMultiDept = undefined;
+    if (modeVal === 'multi') {
+        isMultiDept = true;
+    } else if (modeVal === 'single') {
+        isMultiDept = false;
+    }
+
     currentFilters = {
         keyword: document.getElementById('searchKeyword').value.trim(),
-        status: document.getElementById('searchStatus').value
+        status: document.getElementById('searchStatus').value,
+        isMultiDept: isMultiDept
     };
     document.getElementById('docListTable').innerHTML = renderDocTable();
 }
@@ -457,6 +487,7 @@ function resetFilters() {
     currentFilters = {};
     document.getElementById('searchKeyword').value = '';
     document.getElementById('searchStatus').value = '';
+    document.getElementById('searchMode').value = '';
     document.getElementById('docListTable').innerHTML = renderDocTable();
 }
 
@@ -477,24 +508,39 @@ function renderDocTable() {
                         <th>来文单位</th>
                         <th>紧急程度</th>
                         <th>当前状态</th>
+                        <th>办理方式</th>
                         <th>剩余时间</th>
                         <th>预警状态</th>
-                        ${currentRole === ROLES.STAFF ? '<th>承办科室</th>' : ''}
+                        ${currentRole === ROLES.STAFF ? '<th>我的角色</th>' : ''}
                         <th>登记时间</th>
                         <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${docs.map(doc => `
+                    ${docs.map(doc => {
+                        let myRole = '';
+                        if (currentRole === ROLES.STAFF) {
+                            const handlerRecord = getHandlerRecord(doc, currentUser.id);
+                            if (handlerRecord) {
+                                myRole = handlerRecord.type === HANDLE_TYPES.MAIN
+                                    ? '<span class="role-badge main">主办</span>'
+                                    : '<span class="role-badge co">协办</span>';
+                            }
+                        }
+                        const modeBadge = doc.isMultiDept
+                            ? '<span class="badge-multi">多科室协办</span>'
+                            : '<span class="badge-single">单科室承办</span>';
+                        return `
                         <tr>
                             <td>${doc.id}</td>
                             <td>${doc.title}</td>
                             <td>${doc.fromUnit}</td>
                             <td>${getPriorityLabel(doc.priority)}</td>
                             <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
+                            <td>${modeBadge}</td>
                             <td>${renderRemainingTime(doc)}</td>
                             <td>${doc.deadline ? `<span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>` : '-'}</td>
-                            ${currentRole === ROLES.STAFF ? `<td>${doc.assignedDept || '-'}</td>` : ''}
+                            ${currentRole === ROLES.STAFF ? `<td>${myRole || '-'}</td>` : ''}
                             <td>${formatDate(doc.createdAt)}</td>
                             <td>
                                 <div class="actions">
@@ -504,7 +550,7 @@ function renderDocTable() {
                                 </div>
                             </td>
                         </tr>
-                    `).join('')}
+                    `}).join('')}
                 </tbody>
             </table>
         </div>
@@ -1001,14 +1047,32 @@ function renderDocDetail() {
 
     let actionButton = '';
     if (canOperate) {
-        const actionLabels = {
-            [FLOW_NODES.PROPOSE]: '填写拟办意见',
-            [FLOW_NODES.ASSIGN]: '分办指派',
-            [FLOW_NODES.HANDLE]: '开始承办',
-            [FLOW_NODES.FEEDBACK]: '提交反馈',
-            [FLOW_NODES.COMPLETE]: '办结归档'
-        };
-        actionButton = `<button class="btn btn-primary" onclick="showOperateModal()">${actionLabels[doc.currentNode] || '办理'}</button>`;
+        let actionLabel = '办理';
+        if (doc.currentNode === FLOW_NODES.PROPOSE) {
+            actionLabel = '填写拟办意见';
+        } else if (doc.currentNode === FLOW_NODES.ASSIGN) {
+            actionLabel = '分办指派';
+        } else if (doc.currentNode === FLOW_NODES.HANDLE) {
+            if (doc.isMultiDept) {
+                const handlerRecord = getHandlerRecord(doc, currentUser.id);
+                if (handlerRecord && handlerRecord.type === HANDLE_TYPES.CO) {
+                    actionLabel = '提交协办意见';
+                } else {
+                    actionLabel = '提交办理意见';
+                }
+            } else {
+                actionLabel = '开始承办';
+            }
+        } else if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+            if (doc.isMultiDept) {
+                actionLabel = '提交最终反馈';
+            } else {
+                actionLabel = '提交反馈';
+            }
+        } else if (doc.currentNode === FLOW_NODES.COMPLETE) {
+            actionLabel = '办结归档';
+        }
+        actionButton = `<button class="btn btn-primary" onclick="showOperateModal()">${actionLabel}</button>`;
     }
 
     let superviseButton = '';
@@ -1097,6 +1161,44 @@ function renderDocDetail() {
                         <span class="detail-value">${formatDateTime(doc.createdAt)}</span>
                     </div>
                     ${doc.assignedDept ? `
+                    ${doc.isMultiDept ? `
+                    <div class="detail-item full-width">
+                        <span class="detail-label">办理方式</span>
+                        <span class="detail-value"><span class="badge-multi">多科室协办</span></span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">主办科室</span>
+                        <span class="detail-value"><span class="dept-tag main-dept">${doc.assignedDept}</span></span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">主办人</span>
+                        <span class="detail-value">${doc.assignedUserName || '-'}</span>
+                    </div>
+                    <div class="detail-item full-width">
+                        <span class="detail-label">协办科室（${getCoHandlers(doc).length}个）</span>
+                        <span class="detail-value">
+                            <div class="co-dept-list">
+                                ${getCoHandlers(doc).map(co => `
+                                    <span class="dept-tag co-dept">
+                                        ${co.dept} - ${co.userName}
+                                        <span class="co-status ${co.status === HANDLE_STATUS.COMPLETED ? 'completed' : 'pending'}">
+                                            ${co.status === HANDLE_STATUS.COMPLETED ? '已完成' : '待办理'}
+                                        </span>
+                                    </span>
+                                `).join('')}
+                            </div>
+                        </span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">协办进度</span>
+                        <span class="detail-value">
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: ${getCoHandleProgress(doc).percent}%"></div>
+                            </div>
+                            <span class="progress-text">${getCoHandleProgress(doc).completed}/${getCoHandleProgress(doc).total} 已完成</span>
+                        </span>
+                    </div>
+                    ` : `
                     <div class="detail-item">
                         <span class="detail-label">承办科室</span>
                         <span class="detail-value"><span class="dept-tag">${doc.assignedDept}</span></span>
@@ -1105,6 +1207,7 @@ function renderDocDetail() {
                         <span class="detail-label">承办人</span>
                         <span class="detail-value">${doc.assignedUserName || '-'}</span>
                     </div>
+                    `}
                     ` : ''}
                     <div class="detail-item full-width">
                         <span class="detail-label">内容摘要</span>
@@ -1182,8 +1285,8 @@ function renderTimeline(doc) {
     let html = '<div class="timeline">';
 
     nodes.forEach((node, index) => {
-        const record = doc.flowRecords.find(r => r.node === node);
-        const isCompleted = !!record;
+        const records = doc.flowRecords.filter(r => r.node === node);
+        const isCompleted = records.length > 0;
         const isCurrent = doc.currentNode === node && !isCompleted;
         const isPending = nodes.indexOf(doc.currentNode) < index;
 
@@ -1195,29 +1298,35 @@ function renderTimeline(doc) {
         }
 
         let contentHtml = '';
-        if (isCompleted && record) {
-            contentHtml = `
-                <div class="timeline-content">
-                    <div class="timeline-title">${NODE_LABELS[node]}</div>
-                    <div class="timeline-meta">
-                        ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
-                    </div>
-                    ${record.comment ? `<div class="timeline-comment">${record.comment}</div>` : ''}
-                    ${record.assignedDept ? `<div class="timeline-meta" style="margin-top:6px;">分派至：${record.assignedDept} - ${record.assignedUserName}</div>` : ''}
-                    ${record.attachments && record.attachments.length > 0 ? `
-                        <div class="timeline-attachment">
-                            <div style="font-size:12px; color:#888; margin-bottom:4px;">附件：</div>
-                            ${record.attachments.map(a => `
-                                <div class="attachment-item" style="padding:4px 8px;">
-                                    <span class="attachment-icon" style="font-size:16px;">📎</span>
-                                    <span class="attachment-name">${a.name}</span>
-                                    <span class="attachment-size">${a.size}</span>
-                                </div>
-                            `).join('')}
+        if (isCompleted && records.length > 0) {
+            if (node === FLOW_NODES.HANDLE && doc.isMultiDept) {
+                contentHtml = renderMultiHandleTimelineContent(doc, records);
+            } else {
+                const record = records[0];
+                contentHtml = `
+                    <div class="timeline-content">
+                        <div class="timeline-title">${NODE_LABELS[node]}</div>
+                        <div class="timeline-meta">
+                            ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
                         </div>
-                    ` : ''}
-                </div>
-            `;
+                        ${record.comment ? `<div class="timeline-comment">${record.comment}</div>` : ''}
+                        ${record.assignedDept ? `<div class="timeline-meta" style="margin-top:6px;">分派至：${record.assignedDept} - ${record.assignedUserName}</div>` : ''}
+                        ${record.isMultiDept ? `<div class="timeline-meta" style="margin-top:4px;"><span class="badge-multi">多科室协办</span></div>` : ''}
+                        ${record.attachments && record.attachments.length > 0 ? `
+                            <div class="timeline-attachment">
+                                <div style="font-size:12px; color:#888; margin-bottom:4px;">附件：</div>
+                                ${record.attachments.map(a => `
+                                    <div class="attachment-item" style="padding:4px 8px;">
+                                        <span class="attachment-icon" style="font-size:16px;">📎</span>
+                                        <span class="attachment-name">${a.name}</span>
+                                        <span class="attachment-size">${a.size}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
         } else if (isCurrent) {
             contentHtml = `
                 <div class="timeline-content" style="opacity:0.7;">
@@ -1246,7 +1355,58 @@ function renderTimeline(doc) {
     return html;
 }
 
+function renderMultiHandleTimelineContent(doc, records) {
+    const handleRecords = doc.handleRecords || [];
+
+    let recordsHtml = handleRecords.map(hr => {
+        const isMain = hr.type === HANDLE_TYPES.MAIN;
+        const isCompleted = hr.status === HANDLE_STATUS.COMPLETED;
+        const flowRecord = records.find(r => r.operatorId === hr.userId);
+
+        return `
+            <div class="handle-record-item ${isCompleted ? 'completed' : 'pending'}">
+                <div class="handle-record-header">
+                    <span class="handle-type-badge ${isMain ? 'main' : 'co'}">${isMain ? '主办' : '协办'}</span>
+                    <span class="handle-dept">${hr.dept}</span>
+                    <span class="handle-name">${hr.userName}</span>
+                    <span class="handle-status ${isCompleted ? 'done' : 'wait'}">
+                        ${isCompleted ? '已完成' : '待办理'}
+                    </span>
+                </div>
+                ${isCompleted && flowRecord ? `
+                    <div class="handle-record-body">
+                        <div class="timeline-meta">${formatDateTime(flowRecord.time)}</div>
+                        ${flowRecord.comment ? `<div class="timeline-comment">${flowRecord.comment}</div>` : ''}
+                        ${flowRecord.attachments && flowRecord.attachments.length > 0 ? `
+                            <div class="timeline-attachment">
+                                <div style="font-size:12px; color:#888; margin-bottom:4px;">附件：</div>
+                                ${flowRecord.attachments.map(a => `
+                                    <div class="attachment-item" style="padding:4px 8px;">
+                                        <span class="attachment-icon" style="font-size:16px;">📎</span>
+                                        <span class="attachment-name">${a.name}</span>
+                                        <span class="attachment-size">${a.size}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="timeline-content">
+            <div class="timeline-title">${NODE_LABELS[FLOW_NODES.HANDLE]} <span class="badge-multi">多科室协办</span></div>
+            <div class="handle-records-list">
+                ${recordsHtml}
+            </div>
+        </div>
+    `;
+}
+
 let operateAttachments = [];
+let coHandlerList = [];
 
 function showOperateModal() {
     const doc = dataStore.getDoc(currentDocId);
@@ -1272,6 +1432,7 @@ function showOperateModal() {
 
         case FLOW_NODES.ASSIGN:
             title = '分办指派';
+            coHandlerList = [];
             const deptOptions = DEPARTMENTS.filter(d => d !== '局领导').map(d => `<option value="${d}">${d}</option>`).join('');
             bodyHtml = `
                 ${renderTemplateSelector(TEMPLATE_TYPES.ASSIGN)}
@@ -1280,60 +1441,156 @@ function showOperateModal() {
                     <textarea class="form-textarea" id="opComment" rows="3" placeholder="请输入分办批示意见..."></textarea>
                 </div>
                 <div class="form-group">
-                    <label class="form-label"><span class="required">*</span>承办科室</label>
-                    <select class="form-select" id="opDept" onchange="updateStaffOptions()">
-                        <option value="">请选择科室</option>
-                        ${deptOptions}
-                    </select>
+                    <label class="form-label">分办模式</label>
+                    <div class="mode-switch">
+                        <label class="mode-option active" onclick="setAssignMode('single', this)">
+                            <input type="radio" name="assignMode" value="single" checked>
+                            <span>单科室承办</span>
+                        </label>
+                        <label class="mode-option" onclick="setAssignMode('multi', this)">
+                            <input type="radio" name="assignMode" value="multi">
+                            <span>多科室协办</span>
+                        </label>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label"><span class="required">*</span>承办人</label>
-                    <select class="form-select" id="opStaff">
-                        <option value="">请先选择科室</option>
-                    </select>
+                <div id="singleModeSection">
+                    <div class="form-group">
+                        <label class="form-label"><span class="required">*</span>承办科室</label>
+                        <select class="form-select" id="opDept" onchange="updateStaffOptions()">
+                            <option value="">请选择科室</option>
+                            ${deptOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label"><span class="required">*</span>承办人</label>
+                        <select class="form-select" id="opStaff">
+                            <option value="">请先选择科室</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="multiModeSection" style="display:none;">
+                    <div class="form-group">
+                        <label class="form-label"><span class="required">*</span>主办科室</label>
+                        <select class="form-select" id="mainDept" onchange="updateMainStaffOptions()">
+                            <option value="">请选择主办科室</option>
+                            ${deptOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label"><span class="required">*</span>主办人</label>
+                        <select class="form-select" id="mainStaff">
+                            <option value="">请先选择科室</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">协办科室</label>
+                        <div id="coHandlerList">
+                            <div class="empty-tip" style="color:#999; font-size:13px; padding:8px 0;">暂无协办科室</div>
+                        </div>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="showAddCoHandlerModal()" style="margin-top:8px;">
+                            + 添加协办科室
+                        </button>
+                    </div>
                 </div>
             `;
             break;
 
         case FLOW_NODES.HANDLE:
-            title = '承办办理';
-            bodyHtml = `
-                ${renderTemplateSelector(TEMPLATE_TYPES.HANDLE)}
-                <div class="form-group">
-                    <label class="form-label"><span class="required">*</span>办理意见</label>
-                    <textarea class="form-textarea" id="opComment" rows="5" placeholder="请输入办理情况说明..."></textarea>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">办理附件</label>
-                    <div class="upload-area" onclick="document.getElementById('opAttachments').click()">
-                        <div class="upload-icon">📎</div>
-                        <div class="upload-text">点击上传办理相关附件</div>
-                        <input type="file" id="opAttachments" multiple onchange="handleOpFileSelect()">
+            if (doc.isMultiDept) {
+                const handlerRecord = getHandlerRecord(doc, currentUser.id);
+                const isCo = handlerRecord && handlerRecord.type === HANDLE_TYPES.CO;
+                title = isCo ? '协办意见' : '承办办理';
+                const label = isCo ? '协办意见' : '办理意见';
+                const placeholder = isCo ? '请输入协办意见...' : '请输入办理情况说明...';
+                const attLabel = isCo ? '协办附件' : '办理附件';
+                const attPlaceholder = isCo ? '点击上传协办相关附件' : '点击上传办理相关附件';
+                const tipText = isCo
+                    ? '提交协办意见后，请等待主办人汇总反馈。'
+                    : (getCoHandlers(doc).length > 0
+                        ? `当前已完成 ${getCoHandleProgress(doc).completed}/${getCoHandleProgress(doc).total} 个协办，所有协办完成后可提交最终反馈。`
+                        : '提交办理进展后，将进入反馈环节。');
+                bodyHtml = `
+                    ${renderTemplateSelector(isCo ? TEMPLATE_TYPES.HANDLE : TEMPLATE_TYPES.HANDLE)}
+                    <div class="form-group">
+                        <label class="form-label"><span class="required">*</span>${label}</label>
+                        <textarea class="form-textarea" id="opComment" rows="5" placeholder="${placeholder}"></textarea>
                     </div>
-                    <div class="attachment-list" id="opAttachmentsList" style="margin-top:12px;"></div>
-                </div>
-            `;
+                    <div class="form-group">
+                        <label class="form-label">${attLabel}</label>
+                        <div class="upload-area" onclick="document.getElementById('opAttachments').click()">
+                            <div class="upload-icon">📎</div>
+                            <div class="upload-text">${attPlaceholder}</div>
+                            <input type="file" id="opAttachments" multiple onchange="handleOpFileSelect()">
+                        </div>
+                        <div class="attachment-list" id="opAttachmentsList" style="margin-top:12px;"></div>
+                    </div>
+                    <p style="color:#888; font-size:12px;">${tipText}</p>
+                `;
+            } else {
+                title = '承办办理';
+                bodyHtml = `
+                    ${renderTemplateSelector(TEMPLATE_TYPES.HANDLE)}
+                    <div class="form-group">
+                        <label class="form-label"><span class="required">*</span>办理意见</label>
+                        <textarea class="form-textarea" id="opComment" rows="5" placeholder="请输入办理情况说明..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">办理附件</label>
+                        <div class="upload-area" onclick="document.getElementById('opAttachments').click()">
+                            <div class="upload-icon">📎</div>
+                            <div class="upload-text">点击上传办理相关附件</div>
+                            <input type="file" id="opAttachments" multiple onchange="handleOpFileSelect()">
+                        </div>
+                        <div class="attachment-list" id="opAttachmentsList" style="margin-top:12px;"></div>
+                    </div>
+                `;
+            }
             break;
 
         case FLOW_NODES.FEEDBACK:
-            title = '办理反馈';
-            bodyHtml = `
-                ${renderTemplateSelector(TEMPLATE_TYPES.FEEDBACK)}
-                <div class="form-group">
-                    <label class="form-label"><span class="required">*</span>反馈意见</label>
-                    <textarea class="form-textarea" id="opComment" rows="5" placeholder="请输入办理结果反馈..."></textarea>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">反馈附件</label>
-                    <div class="upload-area" onclick="document.getElementById('opAttachments').click()">
-                        <div class="upload-icon">📎</div>
-                        <div class="upload-text">点击上传反馈相关附件</div>
-                        <input type="file" id="opAttachments" multiple onchange="handleOpFileSelect()">
+            if (doc.isMultiDept) {
+                const allCoDone = allCoHandlersCompleted(doc);
+                title = '最终反馈';
+                bodyHtml = `
+                    ${renderTemplateSelector(TEMPLATE_TYPES.FEEDBACK)}
+                    ${!allCoDone ? `<div class="alert alert-warning" style="margin-bottom:16px;">
+                        ⚠️ 还有 ${getCoHandleProgress(doc).total - getCoHandleProgress(doc).completed} 个协办科室未提交意见，请等待所有协办完成后再提交最终反馈。
+                    </div>` : ''}
+                    <div class="form-group">
+                        <label class="form-label"><span class="required">*</span>最终反馈意见</label>
+                        <textarea class="form-textarea" id="opComment" rows="5" placeholder="请输入最终办理结果反馈..."></textarea>
                     </div>
-                    <div class="attachment-list" id="opAttachmentsList" style="margin-top:12px;"></div>
-                </div>
-                <p style="color:#888; font-size:12px;">提交反馈后，公文将进入办结待归档状态。</p>
-            `;
+                    <div class="form-group">
+                        <label class="form-label">反馈附件</label>
+                        <div class="upload-area" onclick="document.getElementById('opAttachments').click()">
+                            <div class="upload-icon">📎</div>
+                            <div class="upload-text">点击上传反馈相关附件</div>
+                            <input type="file" id="opAttachments" multiple onchange="handleOpFileSelect()">
+                        </div>
+                        <div class="attachment-list" id="opAttachmentsList" style="margin-top:12px;"></div>
+                    </div>
+                    <p style="color:#888; font-size:12px;">提交最终反馈后，公文将进入办结待归档状态。</p>
+                `;
+            } else {
+                title = '办理反馈';
+                bodyHtml = `
+                    ${renderTemplateSelector(TEMPLATE_TYPES.FEEDBACK)}
+                    <div class="form-group">
+                        <label class="form-label"><span class="required">*</span>反馈意见</label>
+                        <textarea class="form-textarea" id="opComment" rows="5" placeholder="请输入办理结果反馈..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">反馈附件</label>
+                        <div class="upload-area" onclick="document.getElementById('opAttachments').click()">
+                            <div class="upload-icon">📎</div>
+                            <div class="upload-text">点击上传反馈相关附件</div>
+                            <input type="file" id="opAttachments" multiple onchange="handleOpFileSelect()">
+                        </div>
+                        <div class="attachment-list" id="opAttachmentsList" style="margin-top:12px;"></div>
+                    </div>
+                    <p style="color:#888; font-size:12px;">提交反馈后，公文将进入办结待归档状态。</p>
+                `;
+            }
             break;
 
         case FLOW_NODES.COMPLETE:
@@ -1406,6 +1663,158 @@ function updateStaffOptions() {
     ).join('');
 }
 
+function updateMainStaffOptions() {
+    const dept = document.getElementById('mainDept').value;
+    const staffSelect = document.getElementById('mainStaff');
+
+    if (!dept) {
+        staffSelect.innerHTML = '<option value="">请先选择科室</option>';
+        return;
+    }
+
+    const staff = USERS[ROLES.STAFF].filter(u => u.dept === dept);
+    staffSelect.innerHTML = staff.map(s =>
+        `<option value="${s.id}">${s.name}</option>`
+    ).join('');
+}
+
+function setAssignMode(mode, el) {
+    const options = document.querySelectorAll('.mode-option');
+    options.forEach(opt => opt.classList.remove('active'));
+    el.classList.add('active');
+    el.querySelector('input').checked = true;
+
+    const singleSection = document.getElementById('singleModeSection');
+    const multiSection = document.getElementById('multiModeSection');
+
+    if (mode === 'single') {
+        singleSection.style.display = 'block';
+        multiSection.style.display = 'none';
+    } else {
+        singleSection.style.display = 'none';
+        multiSection.style.display = 'block';
+    }
+}
+
+function showAddCoHandlerModal() {
+    const deptOptions = DEPARTMENTS.filter(d => d !== '局领导').map(d =>
+        `<option value="${d}">${d}</option>`
+    ).join('');
+
+    const modalHtml = `
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>协办科室</label>
+            <select class="form-select" id="addCoDept" onchange="updateCoStaffOptions()">
+                <option value="">请选择科室</option>
+                ${deptOptions}
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>协办人</label>
+            <select class="form-select" id="addCoStaff">
+                <option value="">请先选择科室</option>
+            </select>
+        </div>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeSubModal()">取消</button>
+            <button class="btn btn-primary" onclick="confirmAddCoHandler()">确认添加</button>
+        </div>
+    `;
+
+    const subModal = document.createElement('div');
+    subModal.id = 'subModal';
+    subModal.className = 'modal';
+    subModal.innerHTML = `
+        <div class="modal-overlay" onclick="closeSubModal()"></div>
+        <div class="modal-content" style="width:420px;">
+            <div class="modal-header">
+                <h3>添加协办科室</h3>
+                <button class="modal-close" onclick="closeSubModal()">×</button>
+            </div>
+            <div class="modal-body">
+                ${modalHtml}
+            </div>
+        </div>
+    `;
+    document.body.appendChild(subModal);
+}
+
+function closeSubModal() {
+    const subModal = document.getElementById('subModal');
+    if (subModal) {
+        subModal.remove();
+    }
+}
+
+function updateCoStaffOptions() {
+    const dept = document.getElementById('addCoDept').value;
+    const staffSelect = document.getElementById('addCoStaff');
+
+    if (!dept) {
+        staffSelect.innerHTML = '<option value="">请先选择科室</option>';
+        return;
+    }
+
+    const staff = USERS[ROLES.STAFF].filter(u => u.dept === dept);
+    staffSelect.innerHTML = staff.map(s =>
+        `<option value="${s.id}">${s.name}</option>`
+    ).join('');
+}
+
+function confirmAddCoHandler() {
+    const dept = document.getElementById('addCoDept').value;
+    const staffId = document.getElementById('addCoStaff').value;
+
+    if (!dept) {
+        showToast('请选择协办科室', 'error');
+        return;
+    }
+    if (!staffId) {
+        showToast('请选择协办人', 'error');
+        return;
+    }
+
+    const exists = coHandlerList.some(c => c.userId === staffId);
+    if (exists) {
+        showToast('该协办人已添加', 'warning');
+        return;
+    }
+
+    const staffUser = USERS[ROLES.STAFF].find(u => u.id === staffId);
+    coHandlerList.push({
+        dept: dept,
+        userId: staffId,
+        userName: staffUser.name
+    });
+
+    renderCoHandlerList();
+    closeSubModal();
+    showToast('添加成功');
+}
+
+function renderCoHandlerList() {
+    const container = document.getElementById('coHandlerList');
+    if (!container) return;
+
+    if (coHandlerList.length === 0) {
+        container.innerHTML = '<div class="empty-tip" style="color:#999; font-size:13px; padding:8px 0;">暂无协办科室</div>';
+        return;
+    }
+
+    container.innerHTML = coHandlerList.map((co, index) => `
+        <div class="co-handler-item">
+            <span class="co-handler-dept">${co.dept}</span>
+            <span class="co-handler-name">${co.userName}</span>
+            <span class="co-handler-remove" onclick="removeCoHandler(${index})">×</span>
+        </div>
+    `).join('');
+}
+
+function removeCoHandler(index) {
+    coHandlerList.splice(index, 1);
+    renderCoHandlerList();
+}
+
 function submitOperation() {
     const doc = dataStore.getDoc(currentDocId);
     if (!doc) return;
@@ -1424,22 +1833,51 @@ function submitOperation() {
             break;
 
         case FLOW_NODES.ASSIGN:
-            const dept = document.getElementById('opDept').value;
-            const staffId = document.getElementById('opStaff').value;
+            const modeRadio = document.querySelector('input[name="assignMode"]:checked');
+            const mode = modeRadio ? modeRadio.value : 'single';
+
             if (!comment) {
                 showToast('请输入批示意见', 'error');
                 return;
             }
-            if (!dept) {
-                showToast('请选择承办科室', 'error');
-                return;
+
+            if (mode === 'single') {
+                const dept = document.getElementById('opDept').value;
+                const staffId = document.getElementById('opStaff').value;
+                if (!dept) {
+                    showToast('请选择承办科室', 'error');
+                    return;
+                }
+                if (!staffId) {
+                    showToast('请选择承办人', 'error');
+                    return;
+                }
+                const staffUser = USERS[ROLES.STAFF].find(u => u.id === staffId);
+                result = dataStore.assignDoc(doc.id, dept, staffId, staffUser.name, comment, currentUser);
+            } else {
+                const mainDept = document.getElementById('mainDept').value;
+                const mainStaffId = document.getElementById('mainStaff').value;
+                if (!mainDept) {
+                    showToast('请选择主办科室', 'error');
+                    return;
+                }
+                if (!mainStaffId) {
+                    showToast('请选择主办人', 'error');
+                    return;
+                }
+                if (coHandlerList.length === 0) {
+                    showToast('请至少添加一个协办科室', 'error');
+                    return;
+                }
+                const mainStaffUser = USERS[ROLES.STAFF].find(u => u.id === mainStaffId);
+                result = dataStore.assignDocMulti(doc.id, {
+                    mainDept: mainDept,
+                    mainUserId: mainStaffId,
+                    mainUserName: mainStaffUser.name,
+                    coHandlers: coHandlerList,
+                    comment: comment
+                }, currentUser);
             }
-            if (!staffId) {
-                showToast('请选择承办人', 'error');
-                return;
-            }
-            const staffUser = USERS[ROLES.STAFF].find(u => u.id === staffId);
-            result = dataStore.assignDoc(doc.id, dept, staffId, staffUser.name, comment, currentUser);
             break;
 
         case FLOW_NODES.HANDLE:

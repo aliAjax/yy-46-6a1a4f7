@@ -1879,3 +1879,272 @@ body {
         text-align: center;
     }
 }
+
+/* 多科室协办相关样式 */
+.mode-switch {
+    display: flex;
+    gap: 12px;
+}
+
+.mode-option {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border: 2px solid #e8e8e8;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #fafafa;
+}
+
+.mode-option:hover {
+    border-color: #1890ff;
+    background: #f0f7ff;
+}
+
+.mode-option.active {
+    border-color: #1890ff;
+    background: #e6f7ff;
+    font-weight: 600;
+    color: #1890ff;
+}
+
+.mode-option input[type="radio"] {
+    margin: 0;
+}
+
+.co-handler-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    background: #f6f8fb;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    border: 1px solid #e8e8e8;
+}
+
+.co-handler-dept {
+    font-weight: 600;
+    color: #333;
+    margin-right: 8px;
+}
+
+.co-handler-name {
+    color: #666;
+    flex: 1;
+}
+
+.co-handler-remove {
+    color: #999;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 4px;
+}
+
+.co-handler-remove:hover {
+    color: #f5222d;
+}
+
+.badge-multi {
+    display: inline-block;
+    padding: 2px 10px;
+    background: linear-gradient(135deg, #722ed1, #531dab);
+    color: #fff;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.badge-single {
+    display: inline-block;
+    padding: 2px 10px;
+    background: #e8e8e8;
+    color: #666;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.dept-tag.main-dept {
+    background: #e6f7ff;
+    color: #1890ff;
+    border: 1px solid #91d5ff;
+    font-weight: 600;
+}
+
+.dept-tag.co-dept {
+    background: #fff7e6;
+    color: #d48806;
+    border: 1px solid #ffd591;
+    position: relative;
+    padding-right: 28px;
+}
+
+.co-status {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 8px;
+}
+
+.co-status.completed {
+    background: #f6ffed;
+    color: #52c41a;
+}
+
+.co-status.pending {
+    background: #fff1f0;
+    color: #f5222d;
+}
+
+.co-dept-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.progress-bar {
+    width: 200px;
+    height: 8px;
+    background: #f0f0f0;
+    border-radius: 4px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 10px;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #52c41a, #73d13d);
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+
+.progress-text {
+    font-size: 13px;
+    color: #666;
+    vertical-align: middle;
+}
+
+.role-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.role-badge.main {
+    background: #e6f7ff;
+    color: #1890ff;
+    border: 1px solid #91d5ff;
+}
+
+.role-badge.co {
+    background: #fff7e6;
+    color: #d48806;
+    border: 1px solid #ffd591;
+}
+
+.handle-records-list {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.handle-record-item {
+    background: #fafafa;
+    border-radius: 8px;
+    padding: 12px 16px;
+    border: 1px solid #e8e8e8;
+}
+
+.handle-record-item.completed {
+    border-color: #b7eb8f;
+    background: #fcffe6;
+}
+
+.handle-record-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.handle-type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.handle-type-badge.main {
+    background: #e6f7ff;
+    color: #1890ff;
+}
+
+.handle-type-badge.co {
+    background: #fff7e6;
+    color: #d48806;
+}
+
+.handle-dept {
+    font-weight: 600;
+    color: #333;
+}
+
+.handle-name {
+    color: #666;
+    flex: 1;
+}
+
+.handle-status {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.handle-status.done {
+    background: #f6ffed;
+    color: #52c41a;
+}
+
+.handle-status.wait {
+    background: #fff1f0;
+    color: #f5222d;
+}
+
+.handle-record-body {
+    padding-top: 8px;
+    border-top: 1px dashed #e8e8e8;
+}
+
+.alert {
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.alert-warning {
+    background: #fffbe6;
+    border: 1px solid #ffd591;
+    color: #d46b08;
+}
+
+#subModal .modal-content {
+    z-index: 1001;
+}
+
+#subModal .modal-overlay {
+    z-index: 1000;
+}
