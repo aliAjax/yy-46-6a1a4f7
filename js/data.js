@@ -56,21 +56,41 @@ const USERS = {
 
 const DEPARTMENTS = ['综合科', '业务科', '法规科', '办公室'];
 
-function getDocStatusLabel(currentNode) {
+function getDocStatusLabel(doc) {
+    if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
+        return '已办结';
+    }
     const statusMap = {
         [FLOW_NODES.REGISTER]: '待登记',
-        [FLOW_NODES.PROPOSE]: '待拟办',
+        [FLOW_NODES.PROPOSE]: '待批示',
+        [FLOW_NODES.ASSIGN]: '待分办',
+        [FLOW_NODES.HANDLE]: '待承办',
+        [FLOW_NODES.FEEDBACK]: '待反馈',
+        [FLOW_NODES.COMPLETE]: '待归档'
+    };
+    return statusMap[doc.currentNode] || '未知';
+}
+
+function getDocStatusClass(doc) {
+    if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
+        return 'status-completed';
+    }
+    if (doc.currentNode === FLOW_NODES.COMPLETE) {
+        return 'status-pending';
+    }
+    return 'status-processing';
+}
+
+function getStatusLabelByNode(node) {
+    const statusMap = {
+        [FLOW_NODES.REGISTER]: '待登记',
+        [FLOW_NODES.PROPOSE]: '待批示',
         [FLOW_NODES.ASSIGN]: '待分办',
         [FLOW_NODES.HANDLE]: '待承办',
         [FLOW_NODES.FEEDBACK]: '待反馈',
         [FLOW_NODES.COMPLETE]: '已办结'
     };
-    return statusMap[currentNode] || '未知';
-}
-
-function getDocStatusClass(currentNode) {
-    if (currentNode === FLOW_NODES.COMPLETE) return 'status-completed';
-    return 'status-processing';
+    return statusMap[node] || '未知';
 }
 
 class DataStore {
@@ -87,9 +107,31 @@ class DataStore {
             try {
                 const parsed = JSON.parse(data);
                 this.docs = parsed.docs || [];
+                this.migrateData();
             } catch (e) {
                 this.docs = [];
             }
+        }
+    }
+
+    migrateData() {
+        let changed = false;
+        this.docs.forEach(doc => {
+            if (doc.archived === undefined) {
+                doc.archived = false;
+                if (doc.currentNode === FLOW_NODES.COMPLETE) {
+                    const hasCompleteRecord = doc.flowRecords && 
+                        doc.flowRecords.some(r => r.node === FLOW_NODES.COMPLETE);
+                    if (hasCompleteRecord) {
+                        doc.archived = true;
+                    }
+                }
+                changed = true;
+            }
+            doc.flowRecords = doc.flowRecords || [];
+        });
+        if (changed) {
+            this.save();
         }
     }
 
@@ -120,6 +162,7 @@ class DataStore {
             currentNode: FLOW_NODES.PROPOSE,
             assignedDept: null,
             assignedUser: null,
+            archived: false,
             createdAt: now,
             createdBy: creator.id,
             createdByName: creator.name,
@@ -258,7 +301,7 @@ class DataStore {
 
     completeDoc(docId, comment, operator) {
         const doc = this.getDoc(docId);
-        if (!doc || doc.currentNode !== FLOW_NODES.COMPLETE) return null;
+        if (!doc || doc.currentNode !== FLOW_NODES.COMPLETE || doc.archived) return null;
         
         const now = new Date().toISOString();
         doc.flowRecords.push({
@@ -272,6 +315,7 @@ class DataStore {
             attachments: []
         });
         
+        doc.archived = true;
         this.save();
         return doc;
     }
@@ -286,20 +330,25 @@ class DataStore {
         };
 
         this.docs.forEach(doc => {
-            if (doc.currentNode === FLOW_NODES.COMPLETE) {
+            if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
                 stats.completed++;
             } else {
                 stats.processing++;
             }
 
-            if (role === ROLES.OFFICE && doc.currentNode === FLOW_NODES.PROPOSE) {
-                stats.myPending++;
-            } else if (role === ROLES.LEADER && doc.currentNode === FLOW_NODES.ASSIGN) {
-                stats.myPending++;
-            } else if (role === ROLES.STAFF && 
-                (doc.currentNode === FLOW_NODES.HANDLE || doc.currentNode === FLOW_NODES.FEEDBACK) &&
-                doc.assignedUser === user.id) {
-                stats.myPending++;
+            if (role === ROLES.OFFICE) {
+                if (doc.currentNode === FLOW_NODES.COMPLETE && !doc.archived) {
+                    stats.myPending++;
+                }
+            } else if (role === ROLES.LEADER) {
+                if (doc.currentNode === FLOW_NODES.PROPOSE || doc.currentNode === FLOW_NODES.ASSIGN) {
+                    stats.myPending++;
+                }
+            } else if (role === ROLES.STAFF) {
+                if ((doc.currentNode === FLOW_NODES.HANDLE || doc.currentNode === FLOW_NODES.FEEDBACK) &&
+                    doc.assignedUser === user.id) {
+                    stats.myPending++;
+                }
             }
         });
 
@@ -311,7 +360,7 @@ class DataStore {
         
         switch (doc.currentNode) {
             case FLOW_NODES.PROPOSE:
-                return role === ROLES.OFFICE || role === ROLES.LEADER;
+                return role === ROLES.LEADER;
             case FLOW_NODES.ASSIGN:
                 return role === ROLES.LEADER;
             case FLOW_NODES.HANDLE:
@@ -319,7 +368,7 @@ class DataStore {
             case FLOW_NODES.FEEDBACK:
                 return role === ROLES.STAFF && doc.assignedUser === user.id;
             case FLOW_NODES.COMPLETE:
-                return role === ROLES.OFFICE;
+                return role === ROLES.OFFICE && !doc.archived;
             default:
                 return false;
         }
@@ -344,6 +393,7 @@ class DataStore {
                 assignedDept: '综合科',
                 assignedUser: 'staff1',
                 assignedUserName: '陈科长',
+                archived: true,
                 createdAt: new Date(now - 86400000 * 10).toISOString(),
                 createdBy: 'office1',
                 createdByName: '张秘书',

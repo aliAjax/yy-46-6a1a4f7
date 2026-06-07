@@ -115,9 +115,13 @@ function renderDashboard() {
     
     let pendingList = [];
     if (currentRole === ROLES.OFFICE) {
-        pendingList = dataStore.listDocs({ status: FLOW_NODES.PROPOSE }).slice(0, 5);
+        pendingList = dataStore.listDocs()
+            .filter(d => d.currentNode === FLOW_NODES.COMPLETE && !d.archived)
+            .slice(0, 5);
     } else if (currentRole === ROLES.LEADER) {
-        pendingList = dataStore.listDocs({ status: FLOW_NODES.ASSIGN }).slice(0, 5);
+        pendingList = dataStore.listDocs()
+            .filter(d => d.currentNode === FLOW_NODES.PROPOSE || d.currentNode === FLOW_NODES.ASSIGN)
+            .slice(0, 5);
     } else if (currentRole === ROLES.STAFF) {
         pendingList = dataStore.listDocs()
             .filter(d => (d.currentNode === FLOW_NODES.HANDLE || d.currentNode === FLOW_NODES.FEEDBACK) 
@@ -187,7 +191,7 @@ function renderDashboard() {
                                     <td>${doc.id}</td>
                                     <td>${doc.title}</td>
                                     <td>${doc.fromUnit}</td>
-                                    <td><span class="status-badge ${getDocStatusClass(doc.currentNode)}">${getDocStatusLabel(doc.currentNode)}</span></td>
+                                    <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
                                     <td>${formatDate(doc.createdAt)}</td>
                                     <td><a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">办理</a></td>
                                 </tr>
@@ -221,7 +225,7 @@ function renderDashboard() {
                                     <td>${doc.id}</td>
                                     <td>${doc.title}</td>
                                     <td>${doc.fromUnit}</td>
-                                    <td><span class="status-badge ${getDocStatusClass(doc.currentNode)}">${getDocStatusLabel(doc.currentNode)}</span></td>
+                                    <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
                                     <td>${formatDate(doc.createdAt)}</td>
                                     <td><a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">查看</a></td>
                                 </tr>
@@ -242,7 +246,7 @@ function renderDocList() {
     ];
     
     Object.keys(NODE_LABELS).forEach(node => {
-        statusOptions.push({ value: node, label: getDocStatusLabel(node) });
+        statusOptions.push({ value: node, label: getStatusLabelByNode(node) });
     });
     
     let deptOptions = [{ value: '', label: '全部科室' }];
@@ -326,7 +330,7 @@ function renderDocTable() {
                             <td>${doc.title}</td>
                             <td>${doc.fromUnit}</td>
                             <td>${getPriorityLabel(doc.priority)}</td>
-                            <td><span class="status-badge ${getDocStatusClass(doc.currentNode)}">${getDocStatusLabel(doc.currentNode)}</span></td>
+                            <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
                             ${currentRole === ROLES.STAFF ? `<td>${doc.assignedDept || '-'}</td>` : ''}
                             <td>${formatDate(doc.createdAt)}</td>
                             <td>
@@ -527,7 +531,7 @@ function renderDocDetail() {
         <div class="card">
             <div class="card-header">
                 <span class="card-title">基本信息</span>
-                <span class="status-badge ${getDocStatusClass(doc.currentNode)}">${getDocStatusLabel(doc.currentNode)}</span>
+                <span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span>
             </div>
             <div class="card-body">
                 <div class="detail-grid">
