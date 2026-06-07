@@ -523,6 +523,16 @@ class DataStore {
         const { mainDept, mainUserId, mainUserName, coHandlers = [], comment } = assignData;
         const isMulti = coHandlers && coHandlers.length > 0;
 
+        if (isMulti) {
+            const coUserIds = coHandlers.map(c => c.userId);
+            if (new Set(coUserIds).size !== coUserIds.length) {
+                return null;
+            }
+            if (coUserIds.includes(mainUserId)) {
+                return null;
+            }
+        }
+
         doc.flowRecords.push({
             node: FLOW_NODES.ASSIGN,
             status: NODE_STATUS.COMPLETED,
@@ -600,14 +610,18 @@ class DataStore {
         const handlerRecord = getHandlerRecord(doc, operator.id);
         if (!handlerRecord) return null;
 
+        const isMain = handlerRecord.type === HANDLE_TYPES.MAIN;
+
+        if (doc.isMultiDept && isMain) {
+            return null;
+        }
+
         const now = new Date().toISOString();
 
         handlerRecord.status = HANDLE_STATUS.COMPLETED;
         handlerRecord.comment = comment;
         handlerRecord.attachments = attachments || [];
         handlerRecord.submitTime = now;
-
-        const isMain = handlerRecord.type === HANDLE_TYPES.MAIN;
 
         doc.flowRecords.push({
             node: FLOW_NODES.HANDLE,
@@ -622,9 +636,11 @@ class DataStore {
             handleDept: handlerRecord.dept
         });
 
-        const allCompleted = doc.handleRecords.every(r => r.status === HANDLE_STATUS.COMPLETED);
+        const allCoCompleted = allCoHandlersCompleted(doc);
 
-        if (allCompleted) {
+        if (doc.isMultiDept && allCoCompleted) {
+            doc.currentNode = FLOW_NODES.FEEDBACK;
+        } else if (!doc.isMultiDept) {
             doc.currentNode = FLOW_NODES.FEEDBACK;
         }
 
@@ -644,16 +660,29 @@ class DataStore {
         } else {
             const mainHandler = getMainHandler(doc);
             if (mainHandler) {
-                messageStore.createMessage({
-                    type: MESSAGE_TYPES.DOC_HANDLED,
-                    title: '协办意见已提交',
-                    content: `《${doc.title}》${handlerRecord.dept}已提交协办意见`,
-                    docId: doc.id,
-                    docTitle: doc.title,
-                    fromUserId: operator.id,
-                    fromUserName: operator.name,
-                    toUserId: mainHandler.userId
-                });
+                if (allCoCompleted && doc.isMultiDept) {
+                    messageStore.createMessage({
+                        type: MESSAGE_TYPES.DOC_HANDLED,
+                        title: '所有协办已完成',
+                        content: `《${doc.title}》所有协办科室均已提交意见，请您提交最终反馈`,
+                        docId: doc.id,
+                        docTitle: doc.title,
+                        fromUserId: operator.id,
+                        fromUserName: operator.name,
+                        toUserId: mainHandler.userId
+                    });
+                } else {
+                    messageStore.createMessage({
+                        type: MESSAGE_TYPES.DOC_HANDLED,
+                        title: '协办意见已提交',
+                        content: `《${doc.title}》${handlerRecord.dept}已提交协办意见`,
+                        docId: doc.id,
+                        docTitle: doc.title,
+                        fromUserId: operator.id,
+                        fromUserName: operator.name,
+                        toUserId: mainHandler.userId
+                    });
+                }
             }
         }
 
@@ -673,6 +702,17 @@ class DataStore {
         }
 
         const now = new Date().toISOString();
+
+        if (doc.isMultiDept) {
+            const mainHandler = getMainHandler(doc);
+            if (mainHandler) {
+                mainHandler.status = HANDLE_STATUS.COMPLETED;
+                mainHandler.comment = comment;
+                mainHandler.attachments = attachments || [];
+                mainHandler.submitTime = now;
+            }
+        }
+
         doc.flowRecords.push({
             node: FLOW_NODES.FEEDBACK,
             status: NODE_STATUS.COMPLETED,
@@ -952,10 +992,11 @@ class DataStore {
                 }
             } else if (role === ROLES.STAFF && user) {
                 const handlerRecord = getHandlerRecord(doc, user.id);
-                if (handlerRecord && handlerRecord.status === HANDLE_STATUS.PENDING &&
-                    (doc.currentNode === FLOW_NODES.HANDLE || doc.currentNode === FLOW_NODES.FEEDBACK)) {
+                if (handlerRecord && handlerRecord.status === HANDLE_STATUS.PENDING) {
                     if (handlerRecord.type === HANDLE_TYPES.MAIN) {
-                        stats.myPending++;
+                        if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+                            stats.myPending++;
+                        }
                     } else if (handlerRecord.type === HANDLE_TYPES.CO && doc.currentNode === FLOW_NODES.HANDLE) {
                         stats.myPending++;
                     }
@@ -977,7 +1018,13 @@ class DataStore {
             case FLOW_NODES.HANDLE:
                 if (role !== ROLES.STAFF) return false;
                 const handleRecord = getHandlerRecord(doc, user.id);
-                return handleRecord && handleRecord.status === HANDLE_STATUS.PENDING;
+                if (!handleRecord || handleRecord.status !== HANDLE_STATUS.PENDING) {
+                    return false;
+                }
+                if (doc.isMultiDept && handleRecord.type === HANDLE_TYPES.MAIN) {
+                    return false;
+                }
+                return true;
             case FLOW_NODES.FEEDBACK:
                 if (role !== ROLES.STAFF) return false;
                 if (doc.isMultiDept) {

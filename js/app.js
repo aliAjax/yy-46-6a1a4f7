@@ -1774,6 +1774,12 @@ function confirmAddCoHandler() {
         return;
     }
 
+    const mainStaffId = document.getElementById('mainStaff').value;
+    if (mainStaffId && staffId === mainStaffId) {
+        showToast('协办人不能与主办人相同', 'warning');
+        return;
+    }
+
     const exists = coHandlerList.some(c => c.userId === staffId);
     if (exists) {
         showToast('该协办人已添加', 'warning');
@@ -1867,6 +1873,15 @@ function submitOperation() {
                 }
                 if (coHandlerList.length === 0) {
                     showToast('请至少添加一个协办科室', 'error');
+                    return;
+                }
+                const coUserIds = coHandlerList.map(c => c.userId);
+                if (new Set(coUserIds).size !== coUserIds.length) {
+                    showToast('协办人不能重复', 'error');
+                    return;
+                }
+                if (coUserIds.includes(mainStaffId)) {
+                    showToast('协办人不能与主办人相同', 'error');
                     return;
                 }
                 const mainStaffUser = USERS[ROLES.STAFF].find(u => u.id === mainStaffId);
