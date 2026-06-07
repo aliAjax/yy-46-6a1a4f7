@@ -1459,3 +1459,223 @@ class MessageStore {
 
 const messageStore = new MessageStore();
 messageStore.initMockMessages();
+
+const IMPORT_BATCH_STORAGE_KEY = 'doc_flow_import_batches';
+
+const IMPORT_STATUS = {
+    PENDING: 'pending',
+    COMPLETED: 'completed',
+    FAILED: 'failed'
+};
+
+const IMPORT_STATUS_LABELS = {
+    [IMPORT_STATUS.PENDING]: '待导入',
+    [IMPORT_STATUS.COMPLETED]: '已完成',
+    [IMPORT_STATUS.FAILED]: '导入失败'
+};
+
+class ImportBatchStore {
+    constructor() {
+        this.batches = [];
+        this.load();
+    }
+
+    load() {
+        const data = localStorage.getItem(IMPORT_BATCH_STORAGE_KEY);
+        if (data) {
+            try {
+                const parsed = JSON.parse(data);
+                this.batches = parsed.batches || [];
+            } catch (e) {
+                this.batches = [];
+            }
+        }
+    }
+
+    save() {
+        localStorage.setItem(IMPORT_BATCH_STORAGE_KEY, JSON.stringify({
+            batches: this.batches
+        }));
+    }
+
+    generateBatchId() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const count = this.batches.filter(b =>
+            b.id.startsWith(`IMP-${year}${month}${day}`)
+        ).length + 1;
+        return `IMP-${year}${month}${day}-${String(count).padStart(3, '0')}`;
+    }
+
+    createBatch(batchData, creator) {
+        const now = new Date().toISOString();
+        const batch = {
+            id: this.generateBatchId(),
+            fileName: batchData.fileName,
+            fileType: batchData.fileType,
+            totalCount: batchData.totalCount || 0,
+            successCount: 0,
+            failCount: 0,
+            status: IMPORT_STATUS.PENDING,
+            items: batchData.items || [],
+            errors: [],
+            createdAt: now,
+            createdBy: creator.id,
+            createdByName: creator.name
+        };
+        this.batches.unshift(batch);
+        this.save();
+        return batch;
+    }
+
+    getBatch(id) {
+        return this.batches.find(b => b.id === id);
+    }
+
+    listBatches(filters = {}) {
+        let result = [...this.batches];
+
+        if (filters.keyword) {
+            const kw = filters.keyword.toLowerCase();
+            result = result.filter(b =>
+                b.id.toLowerCase().includes(kw) ||
+                b.fileName.toLowerCase().includes(kw)
+            );
+        }
+
+        if (filters.status) {
+            result = result.filter(b => b.status === filters.status);
+        }
+
+        return result;
+    }
+
+    updateBatchStatus(batchId, status, successCount, failCount, errors = []) {
+        const batch = this.getBatch(batchId);
+        if (!batch) return null;
+
+        batch.status = status;
+        batch.successCount = successCount;
+        batch.failCount = failCount;
+        batch.errors = errors;
+        this.save();
+        return batch;
+    }
+
+    batchCreateDocs(batchId, creator) {
+        const batch = this.getBatch(batchId);
+        if (!batch) return { success: 0, failed: 0, errors: [] };
+
+        const validItems = batch.items.filter(item => item.valid);
+        const errors = [];
+        let successCount = 0;
+
+        validItems.forEach((item, index) => {
+            try {
+                const docData = {
+                    title: item.data.title,
+                    fromUnit: item.data.fromUnit,
+                    docNumber: item.data.docNumber || '',
+                    docDate: item.data.docDate || '',
+                    priority: item.data.priority || 'normal',
+                    category: item.data.category || '',
+                    content: item.data.content || ''
+                };
+                const doc = dataStore.createDoc(docData, creator);
+                item.docId = doc.id;
+                successCount++;
+            } catch (e) {
+                errors.push({
+                    row: index + 1,
+                    message: '创建公文失败：' + e.message
+                });
+            }
+        });
+
+        const failCount = batch.items.filter(item => !item.valid).length + errors.length;
+        const allErrors = [
+            ...batch.items.filter(item => !item.valid).map(item => ({
+                row: item.rowIndex,
+                message: item.errors.join('；')
+            })),
+            ...errors
+        ];
+
+        this.updateBatchStatus(
+            batchId,
+            failCount === batch.items.length ? IMPORT_STATUS.FAILED : IMPORT_STATUS.COMPLETED,
+            successCount,
+            failCount,
+            allErrors
+        );
+
+        return { success: successCount, failed: failCount, errors: allErrors };
+    }
+
+    checkDocNumberExists(docNumber) {
+        if (!docNumber || docNumber.trim() === '') return false;
+        return dataStore.docs.some(d => d.docNumber === docNumber);
+    }
+
+    validateImportItem(itemData, rowIndex, existingDocNumbers = new Set()) {
+        const errors = [];
+
+        if (!itemData.title || itemData.title.trim() === '') {
+            errors.push('标题不能为空');
+        }
+
+        if (!itemData.fromUnit || itemData.fromUnit.trim() === '') {
+            errors.push('来文单位不能为空');
+        }
+
+        if (itemData.docDate) {
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            if (!dateRegex.test(itemData.docDate)) {
+                errors.push('来文日期格式不正确，应为 YYYY-MM-DD');
+            } else {
+                const d = new Date(itemData.docDate);
+                if (isNaN(d.getTime())) {
+                    errors.push('来文日期无效');
+                }
+            }
+        }
+
+        const validPriorities = ['normal', 'high', 'urgent'];
+        if (itemData.priority && !validPriorities.includes(itemData.priority)) {
+            const priorityMap = {
+                '普通': 'normal',
+                '加急': 'high',
+                '特急': 'urgent',
+                '一般': 'normal',
+                '紧急': 'urgent'
+            };
+            if (priorityMap[itemData.priority]) {
+                itemData.priority = priorityMap[itemData.priority];
+            } else {
+                errors.push('紧急程度不正确，应为普通/加急/特急');
+            }
+        }
+
+        if (itemData.docNumber && itemData.docNumber.trim() !== '') {
+            if (this.checkDocNumberExists(itemData.docNumber.trim())) {
+                errors.push('来文字号已存在，重复');
+            }
+            if (existingDocNumbers.has(itemData.docNumber.trim())) {
+                errors.push('导入文件内来文字号重复');
+            }
+            existingDocNumbers.add(itemData.docNumber.trim());
+        }
+
+        return {
+            valid: errors.length === 0,
+            errors: errors,
+            data: itemData,
+            rowIndex: rowIndex,
+            docId: null
+        };
+    }
+}
+
+const importBatchStore = new ImportBatchStore();
