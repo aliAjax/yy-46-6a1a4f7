@@ -3,6 +3,8 @@ let currentUser = null;
 let currentPage = 'dashboard';
 let currentDocId = null;
 let currentFilters = {};
+let currentArchiveFilters = {};
+let isArchiveDetail = false;
 
 function init() {
     updateUserSelect(ROLES.OFFICE);
@@ -75,6 +77,7 @@ function renderNav() {
     
     if (currentRole === ROLES.OFFICE) {
         menuItems.push({ key: 'register', label: '收文登记', icon: '✍️' });
+        menuItems.push({ key: 'archive', label: '归档库', icon: '📦' });
     }
     
     nav.innerHTML = `<div class="nav-menu-inner">
@@ -102,8 +105,12 @@ function navigateTo(page, params = {}) {
         case 'register':
             renderRegisterForm();
             break;
+        case 'archive':
+            renderArchiveList();
+            break;
         case 'detail':
             currentDocId = params.id;
+            isArchiveDetail = params.fromArchive || false;
             renderDocDetail();
             break;
     }
@@ -348,6 +355,143 @@ function renderDocTable() {
     `;
 }
 
+function renderArchiveList() {
+    const content = document.getElementById('contentArea');
+    
+    const categoryOptions = [
+        { value: '', label: '全部类别' },
+        { value: '通知', label: '通知' },
+        { value: '请示', label: '请示' },
+        { value: '报告', label: '报告' },
+        { value: '批复', label: '批复' },
+        { value: '函', label: '函' },
+        { value: '会议纪要', label: '会议纪要' },
+        { value: '其他', label: '其他' }
+    ];
+    
+    const deptOptions = [{ value: '', label: '全部科室' }];
+    DEPARTMENTS.forEach(d => {
+        if (d !== '办公室') {
+            deptOptions.push({ value: d, label: d });
+        }
+    });
+    
+    content.innerHTML = `
+        <div class="page-header">
+            <h2 class="page-title">归档库</h2>
+        </div>
+        
+        <div class="card">
+            <div class="card-body">
+                <div class="archive-search-bar">
+                    <div class="form-group">
+                        <label class="form-label">标题</label>
+                        <input type="text" class="form-input" id="archiveTitle" placeholder="请输入标题关键词" 
+                               onkeyup="if(event.key==='Enter') applyArchiveFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">文号</label>
+                        <input type="text" class="form-input" id="archiveDocNumber" placeholder="请输入文号关键词" 
+                               onkeyup="if(event.key==='Enter') applyArchiveFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">来文单位</label>
+                        <input type="text" class="form-input" id="archiveFromUnit" placeholder="请输入来文单位" 
+                               onkeyup="if(event.key==='Enter') applyArchiveFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">公文类别</label>
+                        <select class="form-select" id="archiveCategory" onchange="applyArchiveFilters()">
+                            ${categoryOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">承办科室</label>
+                        <select class="form-select" id="archiveDept" onchange="applyArchiveFilters()">
+                            ${deptOptions.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="search-actions">
+                        <button class="btn btn-primary" onclick="applyArchiveFilters()">🔍 查询</button>
+                        <button class="btn btn-default" onclick="resetArchiveFilters()">重置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-body" style="padding:0;" id="archiveListTable">
+                ${renderArchiveTable()}
+            </div>
+        </div>
+    `;
+}
+
+function applyArchiveFilters() {
+    currentArchiveFilters = {
+        title: document.getElementById('archiveTitle').value.trim(),
+        docNumber: document.getElementById('archiveDocNumber').value.trim(),
+        fromUnit: document.getElementById('archiveFromUnit').value.trim(),
+        category: document.getElementById('archiveCategory').value,
+        assignedDept: document.getElementById('archiveDept').value
+    };
+    document.getElementById('archiveListTable').innerHTML = renderArchiveTable();
+}
+
+function resetArchiveFilters() {
+    currentArchiveFilters = {};
+    document.getElementById('archiveTitle').value = '';
+    document.getElementById('archiveDocNumber').value = '';
+    document.getElementById('archiveFromUnit').value = '';
+    document.getElementById('archiveCategory').value = '';
+    document.getElementById('archiveDept').value = '';
+    document.getElementById('archiveListTable').innerHTML = renderArchiveTable();
+}
+
+function renderArchiveTable() {
+    const docs = dataStore.listArchivedDocs(currentArchiveFilters);
+    
+    if (docs.length === 0) {
+        return '<div class="empty-state"><div class="empty-icon">📦</div><p>暂无归档公文</p></div>';
+    }
+    
+    return `
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>文号</th>
+                        <th>标题</th>
+                        <th>来文单位</th>
+                        <th>公文类别</th>
+                        <th>承办科室</th>
+                        <th>归档时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${docs.map(doc => {
+                        const completeRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.COMPLETE);
+                        const archiveTime = completeRecord ? completeRecord.time : doc.createdAt;
+                        return `
+                        <tr>
+                            <td>${doc.id}</td>
+                            <td>${doc.title}</td>
+                            <td>${doc.fromUnit}</td>
+                            <td>${doc.category || '-'}</td>
+                            <td>${doc.assignedDept ? `<span class="dept-tag">${doc.assignedDept}</span>` : '-'}</td>
+                            <td>${formatDate(archiveTime)}</td>
+                            <td>
+                                <a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}', fromArchive: true})">查看详情</a>
+                            </td>
+                        </tr>
+                    `;}).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
 function renderRegisterForm() {
     const content = document.getElementById('contentArea');
     
@@ -500,7 +644,7 @@ function renderDocDetail() {
         return;
     }
     
-    const canOperate = dataStore.canOperate(doc, currentRole, currentUser);
+    const canOperate = dataStore.canOperate(doc, currentRole, currentUser) && !isArchiveDetail;
     const content = document.getElementById('contentArea');
     
     let actionButton = '';
@@ -515,15 +659,23 @@ function renderDocDetail() {
         actionButton = `<button class="btn btn-primary" onclick="showOperateModal()">${actionLabels[doc.currentNode] || '办理'}</button>`;
     }
     
+    const backPage = isArchiveDetail ? 'archive' : 'list';
+    const backLabel = isArchiveDetail ? '返回归档库' : '返回列表';
+    
+    let statusBadgeExtra = '';
+    if (isArchiveDetail || (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)) {
+        statusBadgeExtra = '<span class="archive-badge">已归档</span>';
+    }
+    
     const registerRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.REGISTER);
     const proposeRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.PROPOSE);
     const assignRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.ASSIGN);
     
     content.innerHTML = `
         <div class="page-header">
-            <h2 class="page-title">公文详情</h2>
+            <h2 class="page-title">${isArchiveDetail ? '归档详情' : '公文详情'}</h2>
             <div>
-                <button class="btn btn-default" onclick="navigateTo('list')" style="margin-right:8px;">返回列表</button>
+                <button class="btn btn-default" onclick="navigateTo('${backPage}')" style="margin-right:8px;">${backLabel}</button>
                 ${actionButton}
             </div>
         </div>
@@ -531,7 +683,10 @@ function renderDocDetail() {
         <div class="card">
             <div class="card-header">
                 <span class="card-title">基本信息</span>
-                <span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    ${statusBadgeExtra}
+                    <span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span>
+                </div>
             </div>
             <div class="card-body">
                 <div class="detail-grid">

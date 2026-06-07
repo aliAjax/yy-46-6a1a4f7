@@ -439,6 +439,41 @@ body {
     align-self: flex-end;
 }
 
+/* Archive Search Bar */
+.archive-search-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px 16px;
+}
+
+.archive-search-bar .form-group {
+    margin-bottom: 0;
+}
+
+.archive-search-bar .search-actions {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+}
+
+@media (max-width: 768px) {
+    .archive-search-bar {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Archive Badge */
+.archive-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    background: #f6ffed;
+    color: #52c41a;
+    border: 1px solid #b7eb8f;
+}
+
 /* Page Header */
 .page-header {
     display: flex;

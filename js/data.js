@@ -209,6 +209,38 @@ class DataStore {
         return result;
     }
 
+    listArchivedDocs(filters = {}) {
+        let result = this.docs.filter(d => d.currentNode === FLOW_NODES.COMPLETE && d.archived);
+        
+        if (filters.title) {
+            const kw = filters.title.toLowerCase();
+            result = result.filter(d => d.title.toLowerCase().includes(kw));
+        }
+        
+        if (filters.docNumber) {
+            const kw = filters.docNumber.toLowerCase();
+            result = result.filter(d => 
+                d.id.toLowerCase().includes(kw) ||
+                (d.docNumber && d.docNumber.toLowerCase().includes(kw))
+            );
+        }
+        
+        if (filters.fromUnit) {
+            const kw = filters.fromUnit.toLowerCase();
+            result = result.filter(d => d.fromUnit.toLowerCase().includes(kw));
+        }
+        
+        if (filters.category) {
+            result = result.filter(d => d.category === filters.category);
+        }
+        
+        if (filters.assignedDept) {
+            result = result.filter(d => d.assignedDept === filters.assignedDept);
+        }
+        
+        return result;
+    }
+
     proposeDoc(docId, comment, operator) {
         const doc = this.getDoc(docId);
         if (!doc || doc.currentNode !== FLOW_NODES.PROPOSE) return null;
