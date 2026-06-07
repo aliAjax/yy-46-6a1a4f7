@@ -179,7 +179,7 @@ function extractDocAttachments(doc) {
         if (record.attachments && record.attachments.length > 0) {
             record.attachments.forEach((att, attIndex) => {
                 attachments.push({
-                    id: `${doc.id}_${recordIndex}_${attIndex}`,
+                    id: `${doc.id}_${record.id}_${attIndex}`,
                     docId: doc.id,
                     docTitle: doc.title,
                     fileName: att.name,
@@ -193,7 +193,7 @@ function extractDocAttachments(doc) {
                     uploaderName: record.operatorName,
                     uploaderDept: record.operatorDept,
                     uploadTime: record.time,
-                    recordIndex: recordIndex,
+                    recordId: record.id,
                     isReturn: record.isReturn || false,
                     isResubmit: record.isResubmit || false,
                     handleType: record.handleType || null,
@@ -450,6 +450,15 @@ class DataStore {
                 doc.isReturned = false;
                 changed = true;
             }
+
+            if (doc.flowRecords) {
+                doc.flowRecords.forEach((record, idx) => {
+                    if (!record.id) {
+                        record.id = `rec_${doc.id}_${idx}_${record.node}`;
+                        changed = true;
+                    }
+                });
+            }
         });
         if (changed) {
             this.save();
@@ -469,10 +478,15 @@ class DataStore {
         return `GW-${year}-${String(count).padStart(4, '0')}`;
     }
 
+    generateRecordId(docId) {
+        return `rec_${docId}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    }
+
     createDoc(docData, creator) {
         const now = new Date().toISOString();
+        const docId = this.generateDocId();
         const doc = {
-            id: this.generateDocId(),
+            id: docId,
             title: docData.title,
             fromUnit: docData.fromUnit,
             docNumber: docData.docNumber,
@@ -495,6 +509,7 @@ class DataStore {
             returnRecords: [],
             isReturned: false,
             flowRecords: [{
+                id: this.generateRecordId(docId),
                 node: FLOW_NODES.REGISTER,
                 status: NODE_STATUS.COMPLETED,
                 operatorId: creator.id,
@@ -648,6 +663,7 @@ class DataStore {
 
         const now = new Date().toISOString();
         doc.flowRecords.push({
+            id: this.generateRecordId(docId),
             node: FLOW_NODES.PROPOSE,
             status: NODE_STATUS.COMPLETED,
             operatorId: operator.id,
@@ -692,6 +708,7 @@ class DataStore {
         }
 
         doc.flowRecords.push({
+            id: this.generateRecordId(docId),
             node: FLOW_NODES.ASSIGN,
             status: NODE_STATUS.COMPLETED,
             operatorId: operator.id,
@@ -782,6 +799,7 @@ class DataStore {
         handlerRecord.submitTime = now;
 
         doc.flowRecords.push({
+            id: this.generateRecordId(docId),
             node: FLOW_NODES.HANDLE,
             status: NODE_STATUS.COMPLETED,
             operatorId: operator.id,
@@ -873,6 +891,7 @@ class DataStore {
         }
 
         const flowRecord = {
+            id: this.generateRecordId(docId),
             node: FLOW_NODES.FEEDBACK,
             status: NODE_STATUS.COMPLETED,
             operatorId: operator.id,
@@ -941,6 +960,7 @@ class DataStore {
 
         const now = new Date().toISOString();
         doc.flowRecords.push({
+            id: this.generateRecordId(docId),
             node: FLOW_NODES.COMPLETE,
             status: NODE_STATUS.COMPLETED,
             operatorId: operator.id,
@@ -1452,6 +1472,7 @@ class DataStore {
         doc.returnRecords.push(returnRecord);
 
         doc.flowRecords.push({
+            id: this.generateRecordId(docId),
             node: fromNode,
             status: NODE_STATUS.RETURNED,
             operatorId: operator.id,
@@ -1544,6 +1565,7 @@ class DataStore {
         doc.returnRecords.push(resubmitRecord);
 
         doc.flowRecords.push({
+            id: this.generateRecordId(docId),
             node: fromNode,
             status: NODE_STATUS.COMPLETED,
             operatorId: operator.id,

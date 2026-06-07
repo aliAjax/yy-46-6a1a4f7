@@ -1389,7 +1389,7 @@ function renderAttachmentTable() {
                             <td>${att.uploaderDept || '-'}</td>
                             <td>${formatDateTime(att.uploadTime)}</td>
                             <td>
-                                <a class="action-link" onclick="goToDocFromAttachment('${att.docId}', ${att.recordIndex})">查看公文</a>
+                                <a class="action-link" onclick="goToDocFromAttachment('${att.docId}', '${att.recordId}')">查看公文</a>
                             </td>
                         </tr>
                     `).join('')}
@@ -1399,21 +1399,18 @@ function renderAttachmentTable() {
     `;
 }
 
-function goToDocFromAttachment(docId, recordIndex) {
+function goToDocFromAttachment(docId, recordId) {
     currentDocId = docId;
     isArchiveDetail = false;
     navigateTo('detail', { id: docId });
     setTimeout(() => {
-        const timeline = document.querySelector('.timeline');
-        if (timeline) {
-            const items = timeline.querySelectorAll('.timeline-item');
-            if (items[recordIndex]) {
-                items[recordIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                items[recordIndex].classList.add('timeline-highlight');
-                setTimeout(() => {
-                    items[recordIndex].classList.remove('timeline-highlight');
-                }, 3000);
-            }
+        const recordEl = document.querySelector(`[data-record-id="${recordId}"]`);
+        if (recordEl) {
+            recordEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            recordEl.classList.add('timeline-highlight');
+            setTimeout(() => {
+                recordEl.classList.remove('timeline-highlight');
+            }, 3000);
         }
     }, 100);
 }
@@ -1868,7 +1865,7 @@ function renderTimeline(doc) {
                     const isResubmit = record.isResubmit;
                     const recordClass = isReturn ? 'timeline-return-record' : (isResubmit ? 'timeline-resubmit-record' : 'timeline-normal-record');
 
-                    contentHtml += `<div class="${recordClass}">`;
+                    contentHtml += `<div class="${recordClass}" data-record-id="${record.id}">`;
 
                     if (isReturn) {
                         contentHtml += `<div class="timeline-record-label">↩️ 退回至${NODE_LABELS[record.returnToNode]}</div>`;
@@ -1919,7 +1916,7 @@ function renderTimeline(doc) {
             if (returnRecords.length > 0 && node === FLOW_NODES.HANDLE && doc.isMultiDept) {
                 returnRecords.forEach(record => {
                     contentHtml += `
-                        <div class="timeline-return-record">
+                        <div class="timeline-return-record" data-record-id="${record.id}">
                             <div class="timeline-record-label">↩️ 退回至${NODE_LABELS[record.returnToNode]}</div>
                             <div class="timeline-meta">
                                 ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
@@ -1933,7 +1930,7 @@ function renderTimeline(doc) {
             if (resubmitRecords.length > 0 && node === FLOW_NODES.HANDLE && doc.isMultiDept) {
                 resubmitRecords.forEach(record => {
                     contentHtml += `
-                        <div class="timeline-resubmit-record">
+                        <div class="timeline-resubmit-record" data-record-id="${record.id}">
                             <div class="timeline-record-label">↪️ 重提至${NODE_LABELS[record.resubmitToNode]}</div>
                             <div class="timeline-meta">
                                 ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
@@ -1981,7 +1978,7 @@ function renderMultiHandleTimelineContent(doc, records) {
         const flowRecord = records.find(r => r.operatorId === hr.userId);
 
         return `
-            <div class="handle-record-item ${isCompleted ? 'completed' : 'pending'}">
+            <div class="handle-record-item ${isCompleted ? 'completed' : 'pending'}" ${flowRecord ? `data-record-id="${flowRecord.id}"` : ''}>
                 <div class="handle-record-header">
                     <span class="handle-type-badge ${isMain ? 'main' : 'co'}">${isMain ? '主办' : '协办'}</span>
                     <span class="handle-dept">${hr.dept}</span>

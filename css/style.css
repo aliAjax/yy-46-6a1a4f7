@@ -2754,6 +2754,14 @@ body {
     animation: timelineHighlight 3s ease;
 }
 
+.timeline-normal-record.timeline-highlight,
+.timeline-return-record.timeline-highlight,
+.timeline-resubmit-record.timeline-highlight,
+.handle-record-item.timeline-highlight {
+    animation: timelineHighlight 3s ease;
+    border-radius: 6px;
+}
+
 @keyframes timelineHighlight {
     0%, 100% {
         background: #fafafa;
