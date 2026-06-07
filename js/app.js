@@ -171,17 +171,7 @@ function renderDashboard() {
             .slice(0, 5);
     } else if (currentRole === ROLES.STAFF) {
         pendingList = dataStore.listDocs()
-            .filter(d => {
-                const handlerRecord = getHandlerRecord(d, currentUser.id);
-                if (!handlerRecord || handlerRecord.status !== HANDLE_STATUS.PENDING) {
-                    return false;
-                }
-                if (handlerRecord.type === HANDLE_TYPES.MAIN) {
-                    return d.currentNode === FLOW_NODES.HANDLE || d.currentNode === FLOW_NODES.FEEDBACK;
-                } else {
-                    return d.currentNode === FLOW_NODES.HANDLE;
-                }
-            })
+            .filter(d => dataStore.canOperate(d, currentRole, currentUser))
             .slice(0, 5);
     }
 

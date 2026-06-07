@@ -991,15 +991,8 @@ class DataStore {
                     stats.myPending++;
                 }
             } else if (role === ROLES.STAFF && user) {
-                const handlerRecord = getHandlerRecord(doc, user.id);
-                if (handlerRecord && handlerRecord.status === HANDLE_STATUS.PENDING) {
-                    if (handlerRecord.type === HANDLE_TYPES.MAIN) {
-                        if (doc.currentNode === FLOW_NODES.FEEDBACK) {
-                            stats.myPending++;
-                        }
-                    } else if (handlerRecord.type === HANDLE_TYPES.CO && doc.currentNode === FLOW_NODES.HANDLE) {
-                        stats.myPending++;
-                    }
+                if (this.canOperate(doc, role, user)) {
+                    stats.myPending++;
                 }
             }
         });
