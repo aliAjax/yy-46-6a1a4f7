@@ -1621,23 +1621,33 @@ class ImportBatchStore {
 
     validateImportItem(itemData, rowIndex, existingDocNumbers = new Set()) {
         const errors = [];
+        const title = itemData.title == null ? '' : String(itemData.title).trim();
+        const fromUnit = itemData.fromUnit == null ? '' : String(itemData.fromUnit).trim();
+        const docDate = itemData.docDate == null ? '' : String(itemData.docDate).trim();
+        const priority = itemData.priority == null ? '' : String(itemData.priority).trim();
+        const docNumber = itemData.docNumber == null ? '' : String(itemData.docNumber).trim();
 
-        if (!itemData.title || itemData.title.trim() === '') {
+        itemData.title = title;
+        itemData.fromUnit = fromUnit;
+        itemData.docDate = docDate;
+        itemData.docNumber = docNumber;
+
+        if (title === '') {
             errors.push('标题不能为空');
         }
 
-        if (!itemData.fromUnit || itemData.fromUnit.trim() === '') {
+        if (fromUnit === '') {
             errors.push('来文单位不能为空');
         }
 
-        if (!itemData.docDate || itemData.docDate.trim() === '') {
+        if (docDate === '') {
             errors.push('来文日期不能为空');
         } else {
             const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-            if (!dateRegex.test(itemData.docDate.trim())) {
+            if (!dateRegex.test(docDate)) {
                 errors.push('来文日期格式不正确，应为 YYYY-MM-DD');
             } else {
-                const d = new Date(itemData.docDate.trim());
+                const d = new Date(docDate);
                 if (isNaN(d.getTime())) {
                     errors.push('来文日期无效');
                 }
@@ -1645,9 +1655,9 @@ class ImportBatchStore {
         }
 
         const validPriorities = ['normal', 'high', 'urgent'];
-        if (!itemData.priority || itemData.priority.trim() === '') {
+        if (priority === '') {
             errors.push('紧急程度不能为空');
-        } else if (!validPriorities.includes(itemData.priority.trim())) {
+        } else if (!validPriorities.includes(priority)) {
             const priorityMap = {
                 '普通': 'normal',
                 '加急': 'high',
@@ -1655,23 +1665,23 @@ class ImportBatchStore {
                 '一般': 'normal',
                 '紧急': 'urgent'
             };
-            if (priorityMap[itemData.priority.trim()]) {
-                itemData.priority = priorityMap[itemData.priority.trim()];
+            if (priorityMap[priority]) {
+                itemData.priority = priorityMap[priority];
             } else {
                 errors.push('紧急程度不正确，应为普通/加急/特急');
             }
         } else {
-            itemData.priority = itemData.priority.trim();
+            itemData.priority = priority;
         }
 
-        if (itemData.docNumber && itemData.docNumber.trim() !== '') {
-            if (this.checkDocNumberExists(itemData.docNumber.trim())) {
+        if (docNumber !== '') {
+            if (this.checkDocNumberExists(docNumber)) {
                 errors.push('来文字号已存在，重复');
             }
-            if (existingDocNumbers.has(itemData.docNumber.trim())) {
+            if (existingDocNumbers.has(docNumber)) {
                 errors.push('导入文件内来文字号重复');
             }
-            existingDocNumbers.add(itemData.docNumber.trim());
+            existingDocNumbers.add(docNumber);
         }
 
         return {
