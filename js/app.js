@@ -84,11 +84,17 @@ function renderNav() {
         menuItems.push({ key: 'templates', label: '常用意见模板', icon: '📝' });
     }
 
+    const unreadCount = messageStore.getUnreadCount(currentRole, currentUser);
+    const unreadBadge = unreadCount > 0 ? `<span class="nav-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>` : '';
+    menuItems.push({ key: 'messages', label: '消息中心', icon: '🔔', badge: unreadBadge });
+
     nav.innerHTML = `<div class="nav-menu-inner">
         ${menuItems.map(item => `
             <div class="nav-item ${currentPage === item.key ? 'active' : ''}"
                  onclick="navigateTo('${item.key}')">
-                <span>${item.icon}</span> ${item.label}
+                <span class="nav-icon">${item.icon}</span>
+                <span class="nav-label">${item.label}</span>
+                ${item.badge || ''}
             </div>
         `).join('')}
     </div>`;
@@ -114,6 +120,9 @@ function navigateTo(page, params = {}) {
             break;
         case 'templates':
             renderTemplateList();
+            break;
+        case 'messages':
+            renderMessageList();
             break;
         case 'detail':
             currentDocId = params.id;
@@ -144,6 +153,8 @@ function renderDashboard() {
     }
 
     const recentList = dataStore.listDocs().slice(0, 5);
+    const recentMessages = messageStore.getRecentMessages(currentRole, currentUser, 5);
+    const unreadCount = messageStore.getUnreadCount(currentRole, currentUser);
 
     content.innerHTML = `
         <div class="page-header">
@@ -181,38 +192,65 @@ function renderDashboard() {
             </div>
         </div>
 
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">待我处理</span>
-                <a class="action-link" onclick="navigateTo('list')">查看全部 →</a>
-            </div>
-            <div class="card-body" style="padding:0;">
-                ${pendingList.length > 0 ? `
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>文号</th>
-                                <th>标题</th>
-                                <th>来文单位</th>
-                                <th>当前状态</th>
-                                <th>登记时间</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${pendingList.map(doc => `
+        <div class="dashboard-row">
+            <div class="card dashboard-card">
+                <div class="card-header">
+                    <span class="card-title">待我处理</span>
+                    <a class="action-link" onclick="navigateTo('list')">查看全部 →</a>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    ${pendingList.length > 0 ? `
+                        <table class="data-table">
+                            <thead>
                                 <tr>
-                                    <td>${doc.id}</td>
-                                    <td>${doc.title}</td>
-                                    <td>${doc.fromUnit}</td>
-                                    <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
-                                    <td>${formatDate(doc.createdAt)}</td>
-                                    <td><a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">办理</a></td>
+                                    <th>文号</th>
+                                    <th>标题</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
                                 </tr>
+                            </thead>
+                            <tbody>
+                                ${pendingList.map(doc => `
+                                    <tr>
+                                        <td>${doc.id}</td>
+                                        <td class="td-ellipsis" title="${doc.title}">${doc.title}</td>
+                                        <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
+                                        <td><a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">办理</a></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    ` : '<div class="empty-state"><div class="empty-icon">🎉</div><p>暂无待处理公文</p></div>'}
+                </div>
+            </div>
+
+            <div class="card dashboard-card">
+                <div class="card-header">
+                    <span class="card-title">系统消息</span>
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        ${unreadCount > 0 ? `<span class="unread-count">${unreadCount} 条未读</span>` : ''}
+                        <a class="action-link" onclick="navigateTo('messages')">查看全部 →</a>
+                    </div>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    ${recentMessages.length > 0 ? `
+                        <div class="message-list">
+                            ${recentMessages.map(msg => `
+                                <div class="message-item ${msg.read ? '' : 'unread'}" onclick="handleMessageClick('${msg.id}', '${msg.docId}')">
+                                    <div class="message-icon msg-${msg.type}">${getMessageIcon(msg.type)}</div>
+                                    <div class="message-content">
+                                        <div class="message-title">
+                                            ${msg.read ? '' : '<span class="message-dot"></span>'}
+                                            ${msg.title}
+                                        </div>
+                                        <div class="message-desc">${msg.content}</div>
+                                        <div class="message-time">${formatDateTime(msg.createdAt)}</div>
+                                    </div>
+                                </div>
                             `).join('')}
-                        </tbody>
-                    </table>
-                ` : '<div class="empty-state"><div class="empty-icon">🎉</div><p>暂无待处理公文</p></div>'}
+                        </div>
+                    ` : '<div class="empty-state"><div class="empty-icon">🔔</div><p>暂无消息</p></div>'}
+                </div>
             </div>
         </div>
 
@@ -1295,6 +1333,133 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function getMessageIcon(type) {
+    const icons = {
+        [MESSAGE_TYPES.NEW_DOC_PROPOSE]: '📝',
+        [MESSAGE_TYPES.DOC_ASSIGNED]: '📋',
+        [MESSAGE_TYPES.DOC_HANDLED]: '⚙️',
+        [MESSAGE_TYPES.DOC_FEEDBACK]: '📤',
+        [MESSAGE_TYPES.DOC_COMPLETED]: '✅',
+        [MESSAGE_TYPES.DOC_ARCHIVED]: '📦'
+    };
+    return icons[type] || '🔔';
+}
+
+function getMessageTypeLabel(type) {
+    return MESSAGE_TYPE_LABELS[type] || '通知';
+}
+
+let messageFilterType = '';
+
+function renderMessageList() {
+    const content = document.getElementById('contentArea');
+    const allMessages = messageStore.getMessagesForUser(currentRole, currentUser);
+    const unreadCount = messageStore.getUnreadCount(currentRole, currentUser);
+
+    const typeOptions = [
+        { value: '', label: '全部消息' },
+        { value: MESSAGE_TYPES.NEW_DOC_PROPOSE, label: '待批示' },
+        { value: MESSAGE_TYPES.DOC_ASSIGNED, label: '新交办' },
+        { value: MESSAGE_TYPES.DOC_HANDLED, label: '办理中' },
+        { value: MESSAGE_TYPES.DOC_FEEDBACK, label: '已反馈' },
+        { value: MESSAGE_TYPES.DOC_COMPLETED, label: '待归档' },
+        { value: MESSAGE_TYPES.DOC_ARCHIVED, label: '已归档' }
+    ];
+
+    const filteredMessages = messageFilterType
+        ? allMessages.filter(m => m.type === messageFilterType)
+        : allMessages;
+
+    content.innerHTML = `
+        <div class="page-header">
+            <h2 class="page-title">消息中心</h2>
+            <div style="display:flex; gap:10px;">
+                <span class="unread-count-big">未读：${unreadCount} 条</span>
+                <button class="btn btn-default btn-sm" onclick="markAllMessagesRead()" ${unreadCount === 0 ? 'disabled' : ''}>全部标为已读</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="message-filter-bar">
+                    <div class="message-tabs">
+                        ${typeOptions.map(opt => `
+                            <div class="message-tab ${messageFilterType === opt.value ? 'active' : ''}"
+                                 onclick="filterMessages('${opt.value}')">
+                                ${opt.label}
+                                ${opt.value === '' ? '' : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="message-count-info">
+                        共 ${filteredMessages.length} 条消息
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body" style="padding:0;">
+                ${filteredMessages.length > 0 ? `
+                    <div class="message-list-full">
+                        ${filteredMessages.map(msg => `
+                            <div class="message-item-full ${msg.read ? '' : 'unread'}"
+                                 onclick="handleMessageClick('${msg.id}', '${msg.docId}')">
+                                <div class="message-icon msg-${msg.type}">
+                                    ${getMessageIcon(msg.type)}
+                                </div>
+                                <div class="message-content-full">
+                                    <div class="message-header">
+                                        <div class="message-title-full">
+                                            ${msg.read ? '' : '<span class="message-dot"></span>'}
+                                            ${msg.title}
+                                        </div>
+                                        <span class="message-type-tag">${getMessageTypeLabel(msg.type)}</span>
+                                    </div>
+                                    <div class="message-body">
+                                        ${msg.content}
+                                    </div>
+                                    <div class="message-footer">
+                                        <span class="message-from">来自：${msg.fromUserName}</span>
+                                        <span class="message-time">${formatDateTime(msg.createdAt)}</span>
+                                        ${msg.read ? '' : '<span class="mark-read-btn" onclick="event.stopPropagation(); markMessageRead(\'' + msg.id + '\')">标为已读</span>'}
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : '<div class="empty-state"><div class="empty-icon">🔔</div><p>暂无消息</p></div>'}
+            </div>
+        </div>
+    `;
+}
+
+function filterMessages(type) {
+    messageFilterType = type;
+    renderMessageList();
+}
+
+function handleMessageClick(messageId, docId) {
+    messageStore.markAsRead(messageId);
+    if (docId) {
+        navigateTo('detail', { id: docId });
+    }
+    renderNav();
+}
+
+function markMessageRead(messageId) {
+    messageStore.markAsRead(messageId);
+    renderMessageList();
+    renderNav();
+}
+
+function markAllMessagesRead() {
+    messageStore.markAllAsRead(currentRole, currentUser);
+    showToast('已全部标为已读');
+    renderMessageList();
+    renderNav();
 }
 
 document.addEventListener('DOMContentLoaded', init);

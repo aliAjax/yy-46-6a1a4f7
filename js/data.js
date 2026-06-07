@@ -179,6 +179,18 @@ class DataStore {
         };
         this.docs.unshift(doc);
         this.save();
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.NEW_DOC_PROPOSE,
+            title: '新公文待批示',
+            content: `《${doc.title}》已登记，请您批示`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: creator.id,
+            fromUserName: creator.name,
+            toRole: ROLES.LEADER
+        });
+
         return doc;
     }
 
@@ -286,6 +298,18 @@ class DataStore {
         doc.assignedUserName = userName;
         doc.currentNode = FLOW_NODES.HANDLE;
         this.save();
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.DOC_ASSIGNED,
+            title: '新公文交办',
+            content: `《${doc.title}》已分派给您办理`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toUserId: userId
+        });
+
         return doc;
     }
 
@@ -307,6 +331,18 @@ class DataStore {
 
         doc.currentNode = FLOW_NODES.FEEDBACK;
         this.save();
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.DOC_HANDLED,
+            title: '公文办理中',
+            content: `《${doc.title}》承办人已提交办理进展`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toRole: ROLES.LEADER
+        });
+
         return doc;
     }
 
@@ -328,6 +364,29 @@ class DataStore {
 
         doc.currentNode = FLOW_NODES.COMPLETE;
         this.save();
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.DOC_COMPLETED,
+            title: '公文待归档',
+            content: `《${doc.title}》已办结，请归档`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toRole: ROLES.OFFICE
+        });
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.DOC_FEEDBACK,
+            title: '公文已反馈',
+            content: `《${doc.title}》承办人已提交反馈`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toRole: ROLES.LEADER
+        });
+
         return doc;
     }
 
@@ -349,6 +408,31 @@ class DataStore {
 
         doc.archived = true;
         this.save();
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.DOC_ARCHIVED,
+            title: '公文已归档',
+            content: `《${doc.title}》已完成归档`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toRole: ROLES.LEADER
+        });
+
+        if (doc.assignedUser) {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.DOC_ARCHIVED,
+                title: '公文已归档',
+                content: `《${doc.title}》已完成归档`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toUserId: doc.assignedUser
+            });
+        }
+
         return doc;
     }
 
@@ -795,3 +879,214 @@ class TemplateStore {
 
 const templateStore = new TemplateStore();
 templateStore.initMockTemplates();
+
+const MESSAGE_TYPES = {
+    NEW_DOC_PROPOSE: 'new_doc_propose',
+    DOC_ASSIGNED: 'doc_assigned',
+    DOC_HANDLED: 'doc_handled',
+    DOC_FEEDBACK: 'doc_feedback',
+    DOC_COMPLETED: 'doc_completed',
+    DOC_ARCHIVED: 'doc_archived'
+};
+
+const MESSAGE_TYPE_LABELS = {
+    [MESSAGE_TYPES.NEW_DOC_PROPOSE]: '待批示',
+    [MESSAGE_TYPES.DOC_ASSIGNED]: '新交办',
+    [MESSAGE_TYPES.DOC_HANDLED]: '办理中',
+    [MESSAGE_TYPES.DOC_FEEDBACK]: '已反馈',
+    [MESSAGE_TYPES.DOC_COMPLETED]: '待归档',
+    [MESSAGE_TYPES.DOC_ARCHIVED]: '已归档'
+};
+
+const MESSAGE_STORAGE_KEY = 'doc_flow_messages';
+
+class MessageStore {
+    constructor() {
+        this.messages = [];
+        this.load();
+    }
+
+    load() {
+        const data = localStorage.getItem(MESSAGE_STORAGE_KEY);
+        if (data) {
+            try {
+                const parsed = JSON.parse(data);
+                this.messages = parsed.messages || [];
+            } catch (e) {
+                this.messages = [];
+            }
+        }
+    }
+
+    save() {
+        localStorage.setItem(MESSAGE_STORAGE_KEY, JSON.stringify({
+            messages: this.messages
+        }));
+    }
+
+    generateId() {
+        return 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    createMessage(messageData) {
+        const now = new Date().toISOString();
+        const message = {
+            id: this.generateId(),
+            type: messageData.type,
+            title: messageData.title,
+            content: messageData.content,
+            docId: messageData.docId,
+            docTitle: messageData.docTitle,
+            fromUserId: messageData.fromUserId,
+            fromUserName: messageData.fromUserName,
+            toUserId: messageData.toUserId || null,
+            toRole: messageData.toRole || null,
+            read: false,
+            createdAt: now
+        };
+        this.messages.unshift(message);
+        this.save();
+        return message;
+    }
+
+    getMessagesForUser(role, user) {
+        return this.messages.filter(msg => {
+            if (msg.toUserId && msg.toUserId === user.id) {
+                return true;
+            }
+            if (msg.toRole && msg.toRole === role) {
+                return true;
+            }
+            return false;
+        });
+    }
+
+    getUnreadCount(role, user) {
+        return this.getMessagesForUser(role, user).filter(m => !m.read).length;
+    }
+
+    getRecentMessages(role, user, limit = 5) {
+        return this.getMessagesForUser(role, user).slice(0, limit);
+    }
+
+    markAsRead(messageId) {
+        const msg = this.messages.find(m => m.id === messageId);
+        if (msg && !msg.read) {
+            msg.read = true;
+            this.save();
+            return true;
+        }
+        return false;
+    }
+
+    markAllAsRead(role, user) {
+        const userMessages = this.getMessagesForUser(role, user);
+        userMessages.forEach(msg => {
+            msg.read = true;
+        });
+        this.save();
+        return userMessages.length;
+    }
+
+    getMessage(id) {
+        return this.messages.find(m => m.id === id);
+    }
+
+    initMockMessages() {
+        if (this.messages.length > 0) return;
+
+        const now = Date.now();
+
+        this.messages = [
+            {
+                id: 'msg_001',
+                type: MESSAGE_TYPES.NEW_DOC_PROPOSE,
+                title: '新公文待批示',
+                content: '《关于召开工作会议的通知》已登记，请您批示',
+                docId: 'GW-2025-0005',
+                docTitle: '关于召开工作会议的通知',
+                fromUserId: 'office1',
+                fromUserName: '张秘书',
+                toUserId: null,
+                toRole: ROLES.LEADER,
+                read: false,
+                createdAt: new Date(now - 86400000 * 0.3).toISOString()
+            },
+            {
+                id: 'msg_002',
+                type: MESSAGE_TYPES.NEW_DOC_PROPOSE,
+                title: '新公文待批示',
+                content: '《关于申请专项经费的请示》已登记，请您批示',
+                docId: 'GW-2025-0002',
+                docTitle: '关于申请专项经费的请示',
+                fromUserId: 'office2',
+                fromUserName: '李文员',
+                toUserId: null,
+                toRole: ROLES.LEADER,
+                read: true,
+                createdAt: new Date(now - 86400000 * 4).toISOString()
+            },
+            {
+                id: 'msg_003',
+                type: MESSAGE_TYPES.DOC_ASSIGNED,
+                title: '新公文交办',
+                content: '《关于开展安全生产检查的通知》已分派给您办理',
+                docId: 'GW-2025-0003',
+                docTitle: '关于开展安全生产检查的通知',
+                fromUserId: 'leader1',
+                fromUserName: '王局长',
+                toUserId: 'staff3',
+                toRole: null,
+                read: false,
+                createdAt: new Date(now - 86400000 * 2.5).toISOString()
+            },
+            {
+                id: 'msg_004',
+                type: MESSAGE_TYPES.DOC_ASSIGNED,
+                title: '新公文交办',
+                content: '《关于报送月度工作报表的通知》已分派给您办理',
+                docId: 'GW-2025-0004',
+                docTitle: '关于报送月度工作报表的通知',
+                fromUserId: 'leader1',
+                fromUserName: '王局长',
+                toUserId: 'staff2',
+                toRole: null,
+                read: true,
+                createdAt: new Date(now - 86400000 * 1.8).toISOString()
+            },
+            {
+                id: 'msg_005',
+                type: MESSAGE_TYPES.DOC_COMPLETED,
+                title: '公文待归档',
+                content: '《关于组织开展2025年度工作总结的通知》已办结，请归档',
+                docId: 'GW-2025-0001',
+                docTitle: '关于组织开展2025年度工作总结的通知',
+                fromUserId: 'staff1',
+                fromUserName: '陈科长',
+                toUserId: null,
+                toRole: ROLES.OFFICE,
+                read: true,
+                createdAt: new Date(now - 86400000 * 2).toISOString()
+            },
+            {
+                id: 'msg_006',
+                type: MESSAGE_TYPES.DOC_FEEDBACK,
+                title: '公文已反馈',
+                content: '《关于报送月度工作报表的通知》承办人已提交反馈',
+                docId: 'GW-2025-0004',
+                docTitle: '关于报送月度工作报表的通知',
+                fromUserId: 'staff2',
+                fromUserName: '刘干事',
+                toUserId: null,
+                toRole: ROLES.LEADER,
+                read: false,
+                createdAt: new Date(now - 86400000 * 1).toISOString()
+            }
+        ];
+
+        this.save();
+    }
+}
+
+const messageStore = new MessageStore();
+messageStore.initMockMessages();
