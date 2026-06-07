@@ -120,7 +120,7 @@ class DataStore {
             if (doc.archived === undefined) {
                 doc.archived = false;
                 if (doc.currentNode === FLOW_NODES.COMPLETE) {
-                    const hasCompleteRecord = doc.flowRecords && 
+                    const hasCompleteRecord = doc.flowRecords &&
                         doc.flowRecords.some(r => r.node === FLOW_NODES.COMPLETE);
                     if (hasCompleteRecord) {
                         doc.archived = true;
@@ -188,16 +188,16 @@ class DataStore {
 
     listDocs(filters = {}) {
         let result = [...this.docs];
-        
+
         if (filters.keyword) {
             const kw = filters.keyword.toLowerCase();
-            result = result.filter(d => 
+            result = result.filter(d =>
                 d.title.toLowerCase().includes(kw) ||
                 d.id.toLowerCase().includes(kw) ||
                 d.fromUnit.toLowerCase().includes(kw)
             );
         }
-        
+
         if (filters.status) {
             result = result.filter(d => d.currentNode === filters.status);
         }
@@ -205,46 +205,46 @@ class DataStore {
         if (filters.assignedDept) {
             result = result.filter(d => d.assignedDept === filters.assignedDept);
         }
-        
+
         return result;
     }
 
     listArchivedDocs(filters = {}) {
         let result = this.docs.filter(d => d.currentNode === FLOW_NODES.COMPLETE && d.archived);
-        
+
         if (filters.title) {
             const kw = filters.title.toLowerCase();
             result = result.filter(d => d.title.toLowerCase().includes(kw));
         }
-        
+
         if (filters.docNumber) {
             const kw = filters.docNumber.toLowerCase();
-            result = result.filter(d => 
+            result = result.filter(d =>
                 d.id.toLowerCase().includes(kw) ||
                 (d.docNumber && d.docNumber.toLowerCase().includes(kw))
             );
         }
-        
+
         if (filters.fromUnit) {
             const kw = filters.fromUnit.toLowerCase();
             result = result.filter(d => d.fromUnit.toLowerCase().includes(kw));
         }
-        
+
         if (filters.category) {
             result = result.filter(d => d.category === filters.category);
         }
-        
+
         if (filters.assignedDept) {
             result = result.filter(d => d.assignedDept === filters.assignedDept);
         }
-        
+
         return result;
     }
 
     proposeDoc(docId, comment, operator) {
         const doc = this.getDoc(docId);
         if (!doc || doc.currentNode !== FLOW_NODES.PROPOSE) return null;
-        
+
         const now = new Date().toISOString();
         doc.flowRecords.push({
             node: FLOW_NODES.PROPOSE,
@@ -256,7 +256,7 @@ class DataStore {
             comment: comment,
             attachments: []
         });
-        
+
         doc.currentNode = FLOW_NODES.ASSIGN;
         this.save();
         return doc;
@@ -265,7 +265,7 @@ class DataStore {
     assignDoc(docId, dept, userId, userName, comment, operator) {
         const doc = this.getDoc(docId);
         if (!doc || doc.currentNode !== FLOW_NODES.ASSIGN) return null;
-        
+
         const now = new Date().toISOString();
         doc.flowRecords.push({
             node: FLOW_NODES.ASSIGN,
@@ -280,7 +280,7 @@ class DataStore {
             assignedUserId: userId,
             assignedUserName: userName
         });
-        
+
         doc.assignedDept = dept;
         doc.assignedUser = userId;
         doc.assignedUserName = userName;
@@ -292,7 +292,7 @@ class DataStore {
     handleDoc(docId, comment, attachments, operator) {
         const doc = this.getDoc(docId);
         if (!doc || doc.currentNode !== FLOW_NODES.HANDLE) return null;
-        
+
         const now = new Date().toISOString();
         doc.flowRecords.push({
             node: FLOW_NODES.HANDLE,
@@ -304,7 +304,7 @@ class DataStore {
             comment: comment,
             attachments: attachments || []
         });
-        
+
         doc.currentNode = FLOW_NODES.FEEDBACK;
         this.save();
         return doc;
@@ -313,7 +313,7 @@ class DataStore {
     feedbackDoc(docId, comment, attachments, operator) {
         const doc = this.getDoc(docId);
         if (!doc || doc.currentNode !== FLOW_NODES.FEEDBACK) return null;
-        
+
         const now = new Date().toISOString();
         doc.flowRecords.push({
             node: FLOW_NODES.FEEDBACK,
@@ -325,7 +325,7 @@ class DataStore {
             comment: comment,
             attachments: attachments || []
         });
-        
+
         doc.currentNode = FLOW_NODES.COMPLETE;
         this.save();
         return doc;
@@ -334,7 +334,7 @@ class DataStore {
     completeDoc(docId, comment, operator) {
         const doc = this.getDoc(docId);
         if (!doc || doc.currentNode !== FLOW_NODES.COMPLETE || doc.archived) return null;
-        
+
         const now = new Date().toISOString();
         doc.flowRecords.push({
             node: FLOW_NODES.COMPLETE,
@@ -346,7 +346,7 @@ class DataStore {
             comment: comment,
             attachments: []
         });
-        
+
         doc.archived = true;
         this.save();
         return doc;
@@ -389,7 +389,7 @@ class DataStore {
 
     canOperate(doc, role, user) {
         if (!doc || !user) return false;
-        
+
         switch (doc.currentNode) {
             case FLOW_NODES.PROPOSE:
                 return role === ROLES.LEADER;
@@ -410,7 +410,7 @@ class DataStore {
         if (this.docs.length > 0) return;
 
         const now = Date.now();
-        
+
         this.docs = [
             {
                 id: 'GW-2025-0001',

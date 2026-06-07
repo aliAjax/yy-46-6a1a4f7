@@ -24,7 +24,7 @@ function init() {
 function updateUserSelect(role) {
     const select = document.getElementById('userSelect');
     const users = USERS[role] || [];
-    select.innerHTML = users.map(u => 
+    select.innerHTML = users.map(u =>
         `<option value="${u.id}">${u.name}（${u.dept}）</option>`
     ).join('');
 }
@@ -36,10 +36,10 @@ function login(role) {
     const userId = select.value;
     const users = USERS[role] || [];
     currentUser = users.find(u => u.id === userId) || users[0];
-    
+
     sessionStorage.setItem('doc_flow_role', role);
     sessionStorage.setItem('doc_flow_userid', currentUser.id);
-    
+
     showMainApp();
     showToast(`欢迎，${currentUser.name}！`);
 }
@@ -50,7 +50,7 @@ function logout() {
     currentPage = 'dashboard';
     sessionStorage.removeItem('doc_flow_role');
     sessionStorage.removeItem('doc_flow_userid');
-    
+
     document.getElementById('header').classList.add('hidden');
     document.getElementById('contentArea').classList.add('hidden');
     document.getElementById('loginPage').classList.remove('hidden');
@@ -60,10 +60,10 @@ function showMainApp() {
     document.getElementById('loginPage').classList.add('hidden');
     document.getElementById('header').classList.remove('hidden');
     document.getElementById('contentArea').classList.remove('hidden');
-    
+
     document.getElementById('userRoleLabel').textContent = ROLE_LABELS[currentRole];
     document.getElementById('userNameLabel').textContent = currentUser.name;
-    
+
     renderNav();
     renderDashboard();
 }
@@ -71,22 +71,22 @@ function showMainApp() {
 function renderNav() {
     const nav = document.getElementById('navMenu');
     let menuItems = [];
-    
+
     menuItems.push({ key: 'dashboard', label: '工作台', icon: '🏠' });
     menuItems.push({ key: 'list', label: '公文列表', icon: '📋' });
-    
+
     if (currentRole === ROLES.OFFICE) {
         menuItems.push({ key: 'register', label: '收文登记', icon: '✍️' });
         menuItems.push({ key: 'archive', label: '归档库', icon: '📦' });
     }
-    
+
     if (currentRole === ROLES.LEADER || currentRole === ROLES.STAFF) {
         menuItems.push({ key: 'templates', label: '常用意见模板', icon: '📝' });
     }
-    
+
     nav.innerHTML = `<div class="nav-menu-inner">
         ${menuItems.map(item => `
-            <div class="nav-item ${currentPage === item.key ? 'active' : ''}" 
+            <div class="nav-item ${currentPage === item.key ? 'active' : ''}"
                  onclick="navigateTo('${item.key}')">
                 <span>${item.icon}</span> ${item.label}
             </div>
@@ -98,7 +98,7 @@ function navigateTo(page, params = {}) {
     currentPage = page;
     renderNav();
     const content = document.getElementById('contentArea');
-    
+
     switch (page) {
         case 'dashboard':
             renderDashboard();
@@ -126,7 +126,7 @@ function navigateTo(page, params = {}) {
 function renderDashboard() {
     const stats = dataStore.getStats(currentRole, currentUser);
     const content = document.getElementById('contentArea');
-    
+
     let pendingList = [];
     if (currentRole === ROLES.OFFICE) {
         pendingList = dataStore.listDocs()
@@ -138,18 +138,18 @@ function renderDashboard() {
             .slice(0, 5);
     } else if (currentRole === ROLES.STAFF) {
         pendingList = dataStore.listDocs()
-            .filter(d => (d.currentNode === FLOW_NODES.HANDLE || d.currentNode === FLOW_NODES.FEEDBACK) 
+            .filter(d => (d.currentNode === FLOW_NODES.HANDLE || d.currentNode === FLOW_NODES.FEEDBACK)
                 && d.assignedUser === currentUser.id)
             .slice(0, 5);
     }
-    
+
     const recentList = dataStore.listDocs().slice(0, 5);
-    
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">工作台</h2>
         </div>
-        
+
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-icon blue">📊</div>
@@ -180,7 +180,7 @@ function renderDashboard() {
                 </div>
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-header">
                 <span class="card-title">待我处理</span>
@@ -215,7 +215,7 @@ function renderDashboard() {
                 ` : '<div class="empty-state"><div class="empty-icon">🎉</div><p>暂无待处理公文</p></div>'}
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-header">
                 <span class="card-title">最近公文</span>
@@ -254,30 +254,30 @@ function renderDashboard() {
 
 function renderDocList() {
     const content = document.getElementById('contentArea');
-    
+
     let statusOptions = [
         { value: '', label: '全部状态' }
     ];
-    
+
     Object.keys(NODE_LABELS).forEach(node => {
         statusOptions.push({ value: node, label: getStatusLabelByNode(node) });
     });
-    
+
     let deptOptions = [{ value: '', label: '全部科室' }];
     DEPARTMENTS.forEach(d => deptOptions.push({ value: d, label: d }));
-    
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">公文列表</h2>
             ${currentRole === ROLES.OFFICE ? '<button class="btn btn-primary" onclick="navigateTo(\'register\')">+ 收文登记</button>' : ''}
         </div>
-        
+
         <div class="card">
             <div class="card-body">
                 <div class="search-bar">
                     <div class="form-group">
                         <label class="form-label">关键词</label>
-                        <input type="text" class="form-input" id="searchKeyword" placeholder="文号、标题、来文单位" 
+                        <input type="text" class="form-input" id="searchKeyword" placeholder="文号、标题、来文单位"
                                onkeyup="if(event.key==='Enter') applyFilters()">
                     </div>
                     <div class="form-group">
@@ -291,7 +291,7 @@ function renderDocList() {
                 </div>
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-body" style="padding:0;" id="docListTable">
                 ${renderDocTable()}
@@ -317,11 +317,11 @@ function resetFilters() {
 
 function renderDocTable() {
     const docs = dataStore.listDocs(currentFilters);
-    
+
     if (docs.length === 0) {
         return '<div class="empty-state"><div class="empty-icon">📭</div><p>暂无符合条件的公文</p></div>';
     }
-    
+
     return `
         <div class="table-container">
             <table class="data-table">
@@ -350,7 +350,7 @@ function renderDocTable() {
                             <td>
                                 <div class="actions">
                                     <a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">查看</a>
-                                    ${dataStore.canOperate(doc, currentRole, currentUser) ? 
+                                    ${dataStore.canOperate(doc, currentRole, currentUser) ?
                                         `<a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">办理</a>` : ''}
                                 </div>
                             </td>
@@ -364,7 +364,7 @@ function renderDocTable() {
 
 function renderArchiveList() {
     const content = document.getElementById('contentArea');
-    
+
     const categoryOptions = [
         { value: '', label: '全部类别' },
         { value: '通知', label: '通知' },
@@ -375,35 +375,35 @@ function renderArchiveList() {
         { value: '会议纪要', label: '会议纪要' },
         { value: '其他', label: '其他' }
     ];
-    
+
     const deptOptions = [{ value: '', label: '全部科室' }];
     DEPARTMENTS.forEach(d => {
         if (d !== '办公室') {
             deptOptions.push({ value: d, label: d });
         }
     });
-    
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">归档库</h2>
         </div>
-        
+
         <div class="card">
             <div class="card-body">
                 <div class="archive-search-bar">
                     <div class="form-group">
                         <label class="form-label">标题</label>
-                        <input type="text" class="form-input" id="archiveTitle" placeholder="请输入标题关键词" 
+                        <input type="text" class="form-input" id="archiveTitle" placeholder="请输入标题关键词"
                                onkeyup="if(event.key==='Enter') applyArchiveFilters()">
                     </div>
                     <div class="form-group">
                         <label class="form-label">文号</label>
-                        <input type="text" class="form-input" id="archiveDocNumber" placeholder="请输入文号关键词" 
+                        <input type="text" class="form-input" id="archiveDocNumber" placeholder="请输入文号关键词"
                                onkeyup="if(event.key==='Enter') applyArchiveFilters()">
                     </div>
                     <div class="form-group">
                         <label class="form-label">来文单位</label>
-                        <input type="text" class="form-input" id="archiveFromUnit" placeholder="请输入来文单位" 
+                        <input type="text" class="form-input" id="archiveFromUnit" placeholder="请输入来文单位"
                                onkeyup="if(event.key==='Enter') applyArchiveFilters()">
                     </div>
                     <div class="form-group">
@@ -425,7 +425,7 @@ function renderArchiveList() {
                 </div>
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-body" style="padding:0;" id="archiveListTable">
                 ${renderArchiveTable()}
@@ -457,11 +457,11 @@ function resetArchiveFilters() {
 
 function renderArchiveTable() {
     const docs = dataStore.listArchivedDocs(currentArchiveFilters);
-    
+
     if (docs.length === 0) {
         return '<div class="empty-state"><div class="empty-icon">📦</div><p>暂无归档公文</p></div>';
     }
-    
+
     return `
         <div class="table-container">
             <table class="data-table">
@@ -501,13 +501,13 @@ function renderArchiveTable() {
 
 function renderRegisterForm() {
     const content = document.getElementById('contentArea');
-    
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">收文登记</h2>
             <button class="btn btn-default" onclick="navigateTo('list')">返回列表</button>
         </div>
-        
+
         <div class="card">
             <div class="card-body">
                 <div class="detail-grid">
@@ -562,7 +562,7 @@ function renderRegisterForm() {
                         <div class="attachment-list" id="regAttachmentsList" style="margin-top:12px;"></div>
                     </div>
                 </div>
-                
+
                 <div style="margin-top:24px; text-align:right;">
                     <button class="btn btn-default" onclick="navigateTo('list')" style="margin-right:8px;">取消</button>
                     <button class="btn btn-primary btn-lg" onclick="submitRegister()">提交登记</button>
@@ -570,7 +570,7 @@ function renderRegisterForm() {
             </div>
         </div>
     `;
-    
+
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('regDocDate').value = today;
 }
@@ -580,7 +580,7 @@ let registerAttachments = [];
 function handleFileSelect(input, listId) {
     const files = input.files;
     const list = document.getElementById(listId);
-    
+
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const attachment = {
@@ -588,11 +588,11 @@ function handleFileSelect(input, listId) {
             size: formatFileSize(file.size),
             id: 'att_' + Date.now() + '_' + i
         };
-        
+
         if (listId === 'regAttachmentsList') {
             registerAttachments.push(attachment);
         }
-        
+
         const item = document.createElement('div');
         item.className = 'attachment-item';
         item.innerHTML = `
@@ -603,7 +603,7 @@ function handleFileSelect(input, listId) {
         `;
         list.appendChild(item);
     }
-    
+
     input.value = '';
 }
 
@@ -616,7 +616,7 @@ function removeAttachment(id, listId) {
 function submitRegister() {
     const title = document.getElementById('regTitle').value.trim();
     const fromUnit = document.getElementById('regFromUnit').value.trim();
-    
+
     if (!title) {
         showToast('请输入公文标题', 'error');
         return;
@@ -625,7 +625,7 @@ function submitRegister() {
         showToast('请输入来文单位', 'error');
         return;
     }
-    
+
     const docData = {
         title: title,
         fromUnit: fromUnit,
@@ -636,10 +636,10 @@ function submitRegister() {
         content: document.getElementById('regContent').value.trim(),
         attachments: registerAttachments
     };
-    
+
     const doc = dataStore.createDoc(docData, currentUser);
     registerAttachments = [];
-    
+
     showToast('收文登记成功！');
     navigateTo('detail', { id: doc.id });
 }
@@ -650,10 +650,10 @@ function renderDocDetail() {
         document.getElementById('contentArea').innerHTML = '<div class="empty-state"><p>公文不存在</p></div>';
         return;
     }
-    
+
     const canOperate = dataStore.canOperate(doc, currentRole, currentUser) && !isArchiveDetail;
     const content = document.getElementById('contentArea');
-    
+
     let actionButton = '';
     if (canOperate) {
         const actionLabels = {
@@ -665,19 +665,19 @@ function renderDocDetail() {
         };
         actionButton = `<button class="btn btn-primary" onclick="showOperateModal()">${actionLabels[doc.currentNode] || '办理'}</button>`;
     }
-    
+
     const backPage = isArchiveDetail ? 'archive' : 'list';
     const backLabel = isArchiveDetail ? '返回归档库' : '返回列表';
-    
+
     let statusBadgeExtra = '';
     if (isArchiveDetail || (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)) {
         statusBadgeExtra = '<span class="archive-badge">已归档</span>';
     }
-    
+
     const registerRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.REGISTER);
     const proposeRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.PROPOSE);
     const assignRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.ASSIGN);
-    
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">${isArchiveDetail ? '归档详情' : '公文详情'}</h2>
@@ -686,7 +686,7 @@ function renderDocDetail() {
                 ${actionButton}
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-header">
                 <span class="card-title">基本信息</span>
@@ -764,7 +764,7 @@ function renderDocDetail() {
                 </div>
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-header">
                 <span class="card-title">流转记录</span>
@@ -778,22 +778,22 @@ function renderDocDetail() {
 
 function renderTimeline(doc) {
     const nodes = Object.values(FLOW_NODES);
-    
+
     let html = '<div class="timeline">';
-    
+
     nodes.forEach((node, index) => {
         const record = doc.flowRecords.find(r => r.node === node);
         const isCompleted = !!record;
         const isCurrent = doc.currentNode === node && !isCompleted;
         const isPending = nodes.indexOf(doc.currentNode) < index;
-        
+
         let dotClass = '';
         if (isCompleted) {
             dotClass = 'completed';
         } else if (isCurrent || isPending) {
             dotClass = 'pending';
         }
-        
+
         let contentHtml = '';
         if (isCompleted && record) {
             contentHtml = `
@@ -833,7 +833,7 @@ function renderTimeline(doc) {
                 </div>
             `;
         }
-        
+
         html += `
             <div class="timeline-item">
                 <div class="timeline-dot ${dotClass}"></div>
@@ -841,7 +841,7 @@ function renderTimeline(doc) {
             </div>
         `;
     });
-    
+
     html += '</div>';
     return html;
 }
@@ -851,12 +851,12 @@ let operateAttachments = [];
 function showOperateModal() {
     const doc = dataStore.getDoc(currentDocId);
     if (!doc) return;
-    
+
     operateAttachments = [];
-    
+
     let title = '';
     let bodyHtml = '';
-    
+
     switch (doc.currentNode) {
         case FLOW_NODES.PROPOSE:
             title = '拟办批示';
@@ -869,7 +869,7 @@ function showOperateModal() {
                 <p style="color:#888; font-size:12px;">批示后将进入分办环节，由领导指派承办科室。</p>
             `;
             break;
-            
+
         case FLOW_NODES.ASSIGN:
             title = '分办指派';
             const deptOptions = DEPARTMENTS.filter(d => d !== '局领导').map(d => `<option value="${d}">${d}</option>`).join('');
@@ -894,7 +894,7 @@ function showOperateModal() {
                 </div>
             `;
             break;
-            
+
         case FLOW_NODES.HANDLE:
             title = '承办办理';
             bodyHtml = `
@@ -914,7 +914,7 @@ function showOperateModal() {
                 </div>
             `;
             break;
-            
+
         case FLOW_NODES.FEEDBACK:
             title = '办理反馈';
             bodyHtml = `
@@ -935,7 +935,7 @@ function showOperateModal() {
                 <p style="color:#888; font-size:12px;">提交反馈后，公文将进入办结待归档状态。</p>
             `;
             break;
-            
+
         case FLOW_NODES.COMPLETE:
             title = '办结归档';
             bodyHtml = `
@@ -947,7 +947,7 @@ function showOperateModal() {
             `;
             break;
     }
-    
+
     document.getElementById('modalTitle').textContent = title;
     document.getElementById('modalBody').innerHTML = bodyHtml + `
         <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
@@ -962,7 +962,7 @@ function handleOpFileSelect() {
     const input = document.getElementById('opAttachments');
     const files = input.files;
     const list = document.getElementById('opAttachmentsList');
-    
+
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const attachment = {
@@ -970,9 +970,9 @@ function handleOpFileSelect() {
             size: formatFileSize(file.size),
             id: 'opatt_' + Date.now() + '_' + i
         };
-        
+
         operateAttachments.push(attachment);
-        
+
         const item = document.createElement('div');
         item.className = 'attachment-item';
         item.innerHTML = `
@@ -983,7 +983,7 @@ function handleOpFileSelect() {
         `;
         list.appendChild(item);
     }
-    
+
     input.value = '';
 }
 
@@ -994,14 +994,14 @@ function removeOpAttachment(id) {
 function updateStaffOptions() {
     const dept = document.getElementById('opDept').value;
     const staffSelect = document.getElementById('opStaff');
-    
+
     if (!dept) {
         staffSelect.innerHTML = '<option value="">请先选择科室</option>';
         return;
     }
-    
+
     const staff = USERS[ROLES.STAFF].filter(u => u.dept === dept);
-    staffSelect.innerHTML = staff.map(s => 
+    staffSelect.innerHTML = staff.map(s =>
         `<option value="${s.id}">${s.name}</option>`
     ).join('');
 }
@@ -1009,11 +1009,11 @@ function updateStaffOptions() {
 function submitOperation() {
     const doc = dataStore.getDoc(currentDocId);
     if (!doc) return;
-    
+
     const comment = document.getElementById('opComment').value.trim();
-    
+
     let result = null;
-    
+
     switch (doc.currentNode) {
         case FLOW_NODES.PROPOSE:
             if (!comment) {
@@ -1022,7 +1022,7 @@ function submitOperation() {
             }
             result = dataStore.proposeDoc(doc.id, comment, currentUser);
             break;
-            
+
         case FLOW_NODES.ASSIGN:
             const dept = document.getElementById('opDept').value;
             const staffId = document.getElementById('opStaff').value;
@@ -1041,7 +1041,7 @@ function submitOperation() {
             const staffUser = USERS[ROLES.STAFF].find(u => u.id === staffId);
             result = dataStore.assignDoc(doc.id, dept, staffId, staffUser.name, comment, currentUser);
             break;
-            
+
         case FLOW_NODES.HANDLE:
             if (!comment) {
                 showToast('请输入办理意见', 'error');
@@ -1049,7 +1049,7 @@ function submitOperation() {
             }
             result = dataStore.handleDoc(doc.id, comment, operateAttachments, currentUser);
             break;
-            
+
         case FLOW_NODES.FEEDBACK:
             if (!comment) {
                 showToast('请输入反馈意见', 'error');
@@ -1057,12 +1057,12 @@ function submitOperation() {
             }
             result = dataStore.feedbackDoc(doc.id, comment, operateAttachments, currentUser);
             break;
-            
+
         case FLOW_NODES.COMPLETE:
             result = dataStore.completeDoc(doc.id, comment || '已归档', currentUser);
             break;
     }
-    
+
     if (result) {
         closeModal();
         showToast('操作成功！');
@@ -1082,13 +1082,13 @@ function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
     toast.textContent = message;
     toast.classList.remove('hidden');
-    
+
     if (type === 'error') {
         toast.style.background = 'rgba(245, 34, 45, 0.9)';
     } else {
         toast.style.background = 'rgba(0, 0, 0, 0.8)';
     }
-    
+
     setTimeout(() => {
         toast.classList.add('hidden');
     }, 2500);
@@ -1123,20 +1123,20 @@ let currentTemplateType = '';
 
 function renderTemplateList() {
     const content = document.getElementById('contentArea');
-    
+
     let typeOptions = [{ value: '', label: '全部类型' }];
     Object.keys(TEMPLATE_TYPE_LABELS).forEach(key => {
         typeOptions.push({ value: key, label: TEMPLATE_TYPE_LABELS[key] });
     });
-    
+
     const templates = templateStore.getUserTemplates(currentUser.id, currentTemplateType || null);
-    
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">常用意见模板</h2>
             <button class="btn btn-primary" onclick="showAddTemplateModal()">+ 新增模板</button>
         </div>
-        
+
         <div class="card">
             <div class="card-body">
                 <div class="template-filter-bar">
@@ -1152,7 +1152,7 @@ function renderTemplateList() {
                 </div>
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-body" style="padding:0;">
                 ${templates.length > 0 ? `
@@ -1162,7 +1162,7 @@ function renderTemplateList() {
                                 <div class="template-item-header">
                                     <div class="template-item-title">
                                         <span class="template-type-tag ${tpl.type}">${TEMPLATE_TYPE_LABELS[tpl.type]}</span>
-                                        <span class="template-title-text">${tpl.title}</span>
+                                        <span class="template-title-text">${escapeHtml(tpl.title)}</span>
                                     </div>
                                     <div class="template-item-actions">
                                         <span class="template-use-count">使用 ${tpl.useCount} 次</span>
@@ -1189,7 +1189,7 @@ function showAddTemplateModal() {
     Object.keys(TEMPLATE_TYPE_LABELS).forEach(key => {
         typeOptions.push({ value: key, label: TEMPLATE_TYPE_LABELS[key] });
     });
-    
+
     document.getElementById('modalTitle').textContent = '新增常用模板';
     document.getElementById('modalBody').innerHTML = `
         <div class="form-group">
@@ -1218,7 +1218,7 @@ function addTemplate() {
     const type = document.getElementById('newTemplateType').value;
     const title = document.getElementById('newTemplateTitle').value.trim();
     const content = document.getElementById('newTemplateContent').value.trim();
-    
+
     if (!title) {
         showToast('请输入模板标题', 'error');
         return;
@@ -1227,7 +1227,7 @@ function addTemplate() {
         showToast('请输入模板内容', 'error');
         return;
     }
-    
+
     templateStore.addTemplate(currentUser.id, { type, title, content });
     closeModal();
     showToast('模板添加成功！');
@@ -1236,7 +1236,7 @@ function addTemplate() {
 
 function deleteTemplate(templateId) {
     if (!confirm('确定要删除这个模板吗？')) return;
-    
+
     const result = templateStore.deleteTemplate(currentUser.id, templateId);
     if (result) {
         showToast('模板已删除');
@@ -1248,11 +1248,11 @@ function deleteTemplate(templateId) {
 
 function renderTemplateSelector(type) {
     const templates = templateStore.getUserTemplates(currentUser.id, type);
-    
+
     if (templates.length === 0) {
         return '';
     }
-    
+
     return `
         <div class="template-selector">
             <div class="template-selector-label">
@@ -1273,21 +1273,21 @@ function renderTemplateSelector(type) {
 function insertTemplateContent(templateId) {
     const template = templateStore.useTemplate(currentUser.id, templateId);
     if (!template) return;
-    
+
     const textarea = document.getElementById('opComment');
     if (!textarea) return;
-    
+
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const value = textarea.value;
-    
+
     const newValue = value.substring(0, start) + template.content + value.substring(end);
     textarea.value = newValue;
-    
+
     const newPos = start + template.content.length;
     textarea.focus();
     textarea.setSelectionRange(newPos, newPos);
-    
+
     showToast('已插入模板');
 }
 

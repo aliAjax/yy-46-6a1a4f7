@@ -830,23 +830,23 @@ body {
     .detail-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
     }
-    
+
     .header-inner {
         padding: 10px 16px;
     }
-    
+
     .logo h1 {
         font-size: 16px;
     }
-    
+
     .content-area {
         padding: 16px;
     }
-    
+
     .login-card {
         padding: 24px;
     }
