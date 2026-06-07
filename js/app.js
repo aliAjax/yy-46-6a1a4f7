@@ -649,11 +649,14 @@ function renderSupervisionCenter() {
     });
 
     const staffOptions = [{ value: '', label: '全部承办人' }];
+    USERS[ROLES.STAFF].forEach(s => {
+        staffOptions.push({ value: s.id, label: `${s.name}（${s.dept}）` });
+    });
 
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">督办预警中心</h2>
-            ${currentRole === ROLES.OFFICE ? '<div class="page-subtitle">办公室督办管理 · 可对超期公文追加督办记录</div>' : ''}
+            ${currentRole === ROLES.OFFICE ? '<div class="page-subtitle">办公室督办管理 · 仅超期公文可追加督办记录</div>' : ''}
         </div>
 
         <div class="stats-grid supervision-stats-grid">
@@ -766,8 +769,6 @@ function renderSupervisionTable() {
         return '<div class="empty-state"><div class="empty-icon">📋</div><p>暂无符合条件的公文</p></div>';
     }
 
-    const canSuperviseAll = currentRole === ROLES.OFFICE;
-
     return `
         <div class="table-container">
             <table class="data-table">
@@ -806,7 +807,7 @@ function renderSupervisionTable() {
                             <td>
                                 <div class="actions">
                                     <a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">查看</a>
-                                    ${canSuperviseAll && doc.currentNode !== FLOW_NODES.REGISTER && !(doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)
+                                    ${dataStore.canSupervise(doc, currentRole, currentUser)
                                         ? `<a class="action-link action-supervise" onclick="quickSupervise('${doc.id}')">督办</a>`
                                         : ''}
                                 </div>
@@ -1485,7 +1486,7 @@ function submitSupervision() {
         return;
     }
 
-    const result = dataStore.addSupervisionRecord(currentDocId, content, currentUser);
+    const result = dataStore.addSupervisionRecord(currentDocId, content, currentUser, currentRole);
     if (result) {
         closeModal();
         showToast('督办记录已添加！');

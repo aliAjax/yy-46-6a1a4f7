@@ -532,9 +532,13 @@ class DataStore {
         return doc;
     }
 
-    addSupervisionRecord(docId, content, operator) {
+    addSupervisionRecord(docId, content, operator, role) {
         const doc = this.getDoc(docId);
         if (!doc) return null;
+
+        if (!this.canSupervise(doc, role, operator)) {
+            return null;
+        }
 
         const now = new Date().toISOString();
         const record = {
@@ -647,9 +651,12 @@ class DataStore {
 
     canSupervise(doc, role, user) {
         if (!doc || !user) return false;
+        if (role !== ROLES.OFFICE) return false;
         if (doc.currentNode === FLOW_NODES.REGISTER) return false;
         if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) return false;
-        return role === ROLES.OFFICE;
+        if (!doc.deadline) return false;
+        const warningStatus = getWarningStatus(doc);
+        return warningStatus === WARNING_STATUS.OVERDUE;
     }
 
     getStats(role, user) {
