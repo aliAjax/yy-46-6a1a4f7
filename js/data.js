@@ -56,6 +56,8 @@ const USERS = {
 
 const DEPARTMENTS = ['综合科', '业务科', '法规科', '办公室'];
 
+const DOC_CATEGORIES = ['通知', '请示', '报告', '批复', '函', '会议纪要', '意见', '其他'];
+
 const PRIORITY_DAYS = {
     'normal': 5,
     'high': 3,
@@ -447,9 +449,25 @@ class DataStore {
         if (filters.category) {
             if (filters.category === '__none__') {
                 result = result.filter(d => !d.category || d.category === '');
+            } else if (filters.category === '其他') {
+                result = result.filter(d => d.category && d.category !== '' && !DOC_CATEGORIES.slice(0, -1).includes(d.category));
             } else {
                 result = result.filter(d => d.category === filters.category);
             }
+        }
+
+        if (filters.startDate) {
+            result = result.filter(d => {
+                if (!d.createdAt) return false;
+                return new Date(d.createdAt) >= new Date(filters.startDate + 'T00:00:00');
+            });
+        }
+
+        if (filters.endDate) {
+            result = result.filter(d => {
+                if (!d.createdAt) return false;
+                return new Date(d.createdAt) <= new Date(filters.endDate + 'T23:59:59');
+            });
         }
 
         return result;
@@ -477,7 +495,13 @@ class DataStore {
         }
 
         if (filters.category) {
-            result = result.filter(d => d.category === filters.category);
+            if (filters.category === '__none__') {
+                result = result.filter(d => !d.category || d.category === '');
+            } else if (filters.category === '其他') {
+                result = result.filter(d => d.category && d.category !== '' && !DOC_CATEGORIES.slice(0, -1).includes(d.category));
+            } else {
+                result = result.filter(d => d.category === filters.category);
+            }
         }
 
         if (filters.assignedDept) {
@@ -1036,8 +1060,7 @@ class DataStore {
             stats.priorityDistribution[p] = 0;
         });
 
-        const CATEGORIES = ['通知', '请示', '报告', '批复', '函', '会议纪要', '意见', '其他'];
-        CATEGORIES.forEach(c => {
+        DOC_CATEGORIES.forEach(c => {
             stats.categoryDistribution[c] = 0;
         });
         stats.categoryDistribution['未分类'] = 0;
