@@ -239,6 +239,15 @@ body {
     background: #a0182f;
 }
 
+.btn-danger {
+    background: #f5222d;
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #cf1322;
+}
+
 .btn-success {
     background: #52c41a;
     color: white;
@@ -369,6 +378,33 @@ body {
 .status-processing { background: #fff7e6; color: #fa8c16; }
 .status-completed { background: #f0f0f0; color: #555; }
 .status-rejected { background: #fff1f0; color: #f5222d; }
+.status-returned { background: #fff1f0; color: #f5222d; }
+
+.return-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    background: #fff1f0;
+    color: #f5222d;
+    border: 1px solid #ffa39e;
+}
+
+.archive-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    background: #f0f0f0;
+    color: #555;
+}
+
+.text-danger {
+    color: #f5222d;
+    font-weight: 500;
+}
 
 /* Table */
 .table-container {
@@ -563,6 +599,52 @@ body {
     box-shadow: 0 0 0 2px #faad14;
 }
 
+.timeline-dot.returned {
+    background: #f5222d;
+    box-shadow: 0 0 0 2px #f5222d;
+}
+
+.timeline-normal-record {
+    padding: 8px 0;
+    border-bottom: 1px dashed #e8e8e8;
+}
+
+.timeline-normal-record:last-child {
+    border-bottom: none;
+}
+
+.timeline-return-record {
+    padding: 10px 12px;
+    margin: 8px 0;
+    background: #fff1f0;
+    border: 1px solid #ffa39e;
+    border-radius: 6px;
+    border-left: 3px solid #f5222d;
+}
+
+.timeline-resubmit-record {
+    padding: 10px 12px;
+    margin: 8px 0;
+    background: #f6ffed;
+    border: 1px solid #b7eb8f;
+    border-radius: 6px;
+    border-left: 3px solid #52c41a;
+}
+
+.timeline-record-label {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 4px;
+}
+
+.timeline-return-record .timeline-record-label {
+    color: #f5222d;
+}
+
+.timeline-resubmit-record .timeline-record-label {
+    color: #52c41a;
+}
+
 .timeline-content {
     background: #fafafa;
     padding: 12px 16px;
@@ -660,6 +742,40 @@ body {
     padding: 20px 24px;
     overflow-y: auto;
     flex: 1;
+}
+
+.return-info {
+    background: #fafafa;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+}
+
+.return-info p {
+    margin: 4px 0;
+    font-size: 13px;
+    color: #555;
+}
+
+.return-reason-box {
+    background: #fffbe6;
+    border: 1px solid #ffe58f;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+}
+
+.return-reason-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: #d48806;
+    margin-bottom: 6px;
+}
+
+.return-reason-content {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.6;
 }
 
 .modal-footer {

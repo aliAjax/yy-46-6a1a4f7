@@ -173,7 +173,8 @@ function renderDashboard() {
     let pendingList = [];
     if (currentRole === ROLES.OFFICE) {
         pendingList = dataStore.listDocs()
-            .filter(d => d.currentNode === FLOW_NODES.COMPLETE && !d.archived)
+            .filter(d => (d.currentNode === FLOW_NODES.COMPLETE && !d.archived) ||
+                        (d.currentNode === FLOW_NODES.REGISTER && d.isReturned))
             .slice(0, 5);
     } else if (currentRole === ROLES.LEADER) {
         pendingList = dataStore.listDocs()
@@ -181,7 +182,8 @@ function renderDashboard() {
             .slice(0, 5);
     } else if (currentRole === ROLES.STAFF) {
         pendingList = dataStore.listDocs()
-            .filter(d => dataStore.canOperate(d, currentRole, currentUser))
+            .filter(d => dataStore.canOperate(d, currentRole, currentUser) ||
+                        dataStore.canResubmit(d, currentRole, currentUser))
             .slice(0, 5);
     }
 
@@ -1320,10 +1322,20 @@ function renderDocDetail() {
 
     const canOperate = dataStore.canOperate(doc, currentRole, currentUser) && !isArchiveDetail;
     const canSupervise = dataStore.canSupervise(doc, currentRole, currentUser) && !isArchiveDetail;
+    const canReturn = dataStore.canReturn(doc, currentRole, currentUser) && !isArchiveDetail;
+    const canResubmit = dataStore.canResubmit(doc, currentRole, currentUser) && !isArchiveDetail;
     const content = document.getElementById('contentArea');
 
     let actionButton = '';
-    if (canOperate) {
+    if (canResubmit) {
+        let resubmitLabel = '重提';
+        if (doc.currentNode === FLOW_NODES.REGISTER) {
+            resubmitLabel = '补充登记并重提';
+        } else if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+            resubmitLabel = '补充反馈并重提';
+        }
+        actionButton = `<button class="btn btn-primary" onclick="showResubmitModal()">${resubmitLabel}</button>`;
+    } else if (canOperate) {
         let actionLabel = '办理';
         if (doc.currentNode === FLOW_NODES.PROPOSE) {
             actionLabel = '填写拟办意见';
@@ -1352,6 +1364,11 @@ function renderDocDetail() {
         actionButton = `<button class="btn btn-primary" onclick="showOperateModal()">${actionLabel}</button>`;
     }
 
+    let returnButton = '';
+    if (canReturn) {
+        returnButton = `<button class="btn btn-danger" onclick="showReturnModal()">↩️ 退回</button>`;
+    }
+
     let superviseButton = '';
     if (canSupervise) {
         superviseButton = `<button class="btn btn-warning" onclick="showSuperviseModal()">📢 督办</button>`;
@@ -1363,6 +1380,9 @@ function renderDocDetail() {
     let statusBadgeExtra = '';
     if (isArchiveDetail || (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)) {
         statusBadgeExtra = '<span class="archive-badge">已归档</span>';
+    }
+    if (doc.isReturned) {
+        statusBadgeExtra += '<span class="return-badge">已退回</span>';
     }
 
     const warningBadge = doc.deadline && !isArchiveDetail && !(doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)
@@ -1378,6 +1398,7 @@ function renderDocDetail() {
             <h2 class="page-title">${isArchiveDetail ? '归档详情' : '公文详情'}</h2>
             <div>
                 <button class="btn btn-default" onclick="navigateTo('${backPage}')" style="margin-right:8px;">${backLabel}</button>
+                ${returnButton ? returnButton + ' ' : ''}
                 ${superviseButton ? superviseButton + ' ' : ''}
                 ${actionButton}
             </div>
@@ -1563,33 +1584,66 @@ function renderTimeline(doc) {
 
     nodes.forEach((node, index) => {
         const records = doc.flowRecords.filter(r => r.node === node);
-        const isCompleted = records.length > 0;
-        const isCurrent = doc.currentNode === node && !isCompleted;
+        const normalRecords = records.filter(r => !r.isReturn && !r.isResubmit);
+        const returnRecords = records.filter(r => r.isReturn);
+        const resubmitRecords = records.filter(r => r.isResubmit);
+        const hasNormal = normalRecords.length > 0;
+        const isCurrent = doc.currentNode === node && !hasNormal && !doc.isReturned;
+        const isReturnedCurrent = doc.currentNode === node && doc.isReturned;
         const isPending = nodes.indexOf(doc.currentNode) < index;
 
         let dotClass = '';
-        if (isCompleted) {
+        if (hasNormal) {
             dotClass = 'completed';
+        } else if (isReturnedCurrent) {
+            dotClass = 'returned';
         } else if (isCurrent || isPending) {
             dotClass = 'pending';
         }
 
         let contentHtml = '';
-        if (isCompleted && records.length > 0) {
+
+        if (records.length > 0 || isCurrent || isReturnedCurrent) {
+            contentHtml = '<div class="timeline-content">';
+            contentHtml += `<div class="timeline-title">${NODE_LABELS[node]}</div>`;
+
             if (node === FLOW_NODES.HANDLE && doc.isMultiDept) {
-                contentHtml = renderMultiHandleTimelineContent(doc, records);
+                contentHtml += renderMultiHandleTimelineContent(doc, normalRecords);
             } else {
-                const record = records[0];
-                contentHtml = `
-                    <div class="timeline-content">
-                        <div class="timeline-title">${NODE_LABELS[node]}</div>
+                const allRecords = [...records].sort((a, b) => new Date(a.time) - new Date(b.time));
+
+                allRecords.forEach(record => {
+                    const isReturn = record.isReturn;
+                    const isResubmit = record.isResubmit;
+                    const recordClass = isReturn ? 'timeline-return-record' : (isResubmit ? 'timeline-resubmit-record' : 'timeline-normal-record');
+
+                    contentHtml += `<div class="${recordClass}">`;
+
+                    if (isReturn) {
+                        contentHtml += `<div class="timeline-record-label">↩️ 退回至${NODE_LABELS[record.returnToNode]}</div>`;
+                    } else if (isResubmit) {
+                        contentHtml += `<div class="timeline-record-label">↪️ 重提至${NODE_LABELS[record.resubmitToNode]}</div>`;
+                    }
+
+                    contentHtml += `
                         <div class="timeline-meta">
                             ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
                         </div>
-                        ${record.comment ? `<div class="timeline-comment">${record.comment}</div>` : ''}
-                        ${record.assignedDept ? `<div class="timeline-meta" style="margin-top:6px;">分派至：${record.assignedDept} - ${record.assignedUserName}</div>` : ''}
-                        ${record.isMultiDept ? `<div class="timeline-meta" style="margin-top:4px;"><span class="badge-multi">多科室协办</span></div>` : ''}
-                        ${record.attachments && record.attachments.length > 0 ? `
+                    `;
+
+                    if (record.comment) {
+                        contentHtml += `<div class="timeline-comment">${record.comment}</div>`;
+                    }
+
+                    if (record.assignedDept) {
+                        contentHtml += `<div class="timeline-meta" style="margin-top:6px;">分派至：${record.assignedDept} - ${record.assignedUserName}</div>`;
+                    }
+                    if (record.isMultiDept) {
+                        contentHtml += `<div class="timeline-meta" style="margin-top:4px;"><span class="badge-multi">多科室协办</span></div>`;
+                    }
+
+                    if (record.attachments && record.attachments.length > 0) {
+                        contentHtml += `
                             <div class="timeline-attachment">
                                 <div style="font-size:12px; color:#888; margin-bottom:4px;">附件：</div>
                                 ${record.attachments.map(a => `
@@ -1600,17 +1654,48 @@ function renderTimeline(doc) {
                                     </div>
                                 `).join('')}
                             </div>
-                        ` : ''}
-                    </div>
-                `;
+                        `;
+                    }
+
+                    contentHtml += '</div>';
+                });
             }
-        } else if (isCurrent) {
-            contentHtml = `
-                <div class="timeline-content" style="opacity:0.7;">
-                    <div class="timeline-title">${NODE_LABELS[node]}</div>
-                    <div class="timeline-meta">等待处理中...</div>
-                </div>
-            `;
+
+            if (returnRecords.length > 0 && node === FLOW_NODES.HANDLE && doc.isMultiDept) {
+                returnRecords.forEach(record => {
+                    contentHtml += `
+                        <div class="timeline-return-record">
+                            <div class="timeline-record-label">↩️ 退回至${NODE_LABELS[record.returnToNode]}</div>
+                            <div class="timeline-meta">
+                                ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
+                            </div>
+                            ${record.comment ? `<div class="timeline-comment">${record.comment}</div>` : ''}
+                        </div>
+                    `;
+                });
+            }
+
+            if (resubmitRecords.length > 0 && node === FLOW_NODES.HANDLE && doc.isMultiDept) {
+                resubmitRecords.forEach(record => {
+                    contentHtml += `
+                        <div class="timeline-resubmit-record">
+                            <div class="timeline-record-label">↪️ 重提至${NODE_LABELS[record.resubmitToNode]}</div>
+                            <div class="timeline-meta">
+                                ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
+                            </div>
+                            ${record.comment ? `<div class="timeline-comment">${record.comment}</div>` : ''}
+                        </div>
+                    `;
+                });
+            }
+
+            if (isReturnedCurrent && !records.some(r => r.isReturn)) {
+                contentHtml += '<div class="timeline-meta" style="opacity:0.7;">退回待处理中...</div>';
+            } else if (isCurrent && !hasNormal) {
+                contentHtml += '<div class="timeline-meta" style="opacity:0.7;">等待处理中...</div>';
+            }
+
+            contentHtml += '</div>';
         } else {
             contentHtml = `
                 <div class="timeline-content" style="opacity:0.4;">
@@ -2238,6 +2323,123 @@ function submitSupervision() {
     if (result) {
         closeModal();
         showToast('督办记录已添加！');
+        renderDocDetail();
+        renderNav();
+    } else {
+        showToast('操作失败，请重试', 'error');
+    }
+}
+
+function showReturnModal() {
+    const doc = dataStore.getDoc(currentDocId);
+    if (!doc) return;
+
+    let returnTarget = '';
+    let tipText = '';
+
+    if (doc.currentNode === FLOW_NODES.PROPOSE || doc.currentNode === FLOW_NODES.ASSIGN) {
+        returnTarget = '办公室（补充登记）';
+        tipText = '退回后，办公室人员需要补充登记信息后重提，流程将重新进入拟办环节。';
+    } else if (doc.currentNode === FLOW_NODES.COMPLETE) {
+        returnTarget = '承办人（补充反馈）';
+        tipText = '退回后，承办人需要补充反馈内容后重提，流程将重新进入待归档环节。';
+    }
+
+    document.getElementById('modalTitle').textContent = '退回公文';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="return-info">
+            <p><strong>公文标题：</strong>${doc.title}</p>
+            <p><strong>当前环节：</strong>${NODE_LABELS[doc.currentNode]}</p>
+            <p><strong>退回至：</strong><span class="text-danger">${returnTarget}</span></p>
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>退回原因</label>
+            <textarea class="form-textarea" id="returnReason" rows="5" placeholder="请输入退回原因..."></textarea>
+        </div>
+        <p style="color:#888; font-size:12px;">${tipText}</p>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-danger" onclick="submitReturn()">确认退回</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function submitReturn() {
+    const reason = document.getElementById('returnReason').value.trim();
+    if (!reason) {
+        showToast('请输入退回原因', 'error');
+        return;
+    }
+
+    const result = dataStore.returnDoc(currentDocId, reason, currentUser, currentRole);
+    if (result) {
+        closeModal();
+        showToast('退回成功！');
+        renderDocDetail();
+        renderNav();
+    } else {
+        showToast('操作失败，请重试', 'error');
+    }
+}
+
+function showResubmitModal() {
+    const doc = dataStore.getDoc(currentDocId);
+    if (!doc) return;
+
+    let resubmitTarget = '';
+    let label = '';
+    let placeholder = '';
+    let tipText = '';
+
+    if (doc.currentNode === FLOW_NODES.REGISTER) {
+        resubmitTarget = '拟办环节';
+        label = '补充说明';
+        placeholder = '请输入补充登记说明...';
+        tipText = '重提后，公文将重新进入拟办环节，由领导批示。';
+    } else if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+        resubmitTarget = '待归档环节';
+        label = '补充反馈意见';
+        placeholder = '请输入补充反馈意见...';
+        tipText = '重提后，公文将重新进入待归档环节，由办公室归档。';
+    }
+
+    const lastReturnRecord = doc.returnRecords && doc.returnRecords.length > 0
+        ? doc.returnRecords.filter(r => r.type === RETURN_TYPES.RETURN).slice(-1)[0]
+        : null;
+
+    document.getElementById('modalTitle').textContent = '重提公文';
+    document.getElementById('modalBody').innerHTML = `
+        ${lastReturnRecord ? `
+        <div class="return-reason-box">
+            <div class="return-reason-title">📌 退回原因（${lastReturnRecord.operatorName} · ${formatDateTime(lastReturnRecord.time)}）</div>
+            <div class="return-reason-content">${lastReturnRecord.reason}</div>
+        </div>
+        ` : ''}
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>${label}</label>
+            <textarea class="form-textarea" id="resubmitComment" rows="5" placeholder="${placeholder}"></textarea>
+        </div>
+        <p style="color:#888; font-size:12px;">${tipText}</p>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="submitResubmit()">确认重提</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function submitResubmit() {
+    const comment = document.getElementById('resubmitComment').value.trim();
+    if (!comment) {
+        showToast('请输入补充说明', 'error');
+        return;
+    }
+
+    const result = dataStore.resubmitDoc(currentDocId, comment, currentUser, currentRole);
+    if (result) {
+        closeModal();
+        showToast('重提成功！');
         renderDocDetail();
         renderNav();
     } else {

@@ -32,7 +32,18 @@ const NODE_LABELS = {
 
 const NODE_STATUS = {
     PENDING: 'pending',
-    COMPLETED: 'completed'
+    COMPLETED: 'completed',
+    RETURNED: 'returned'
+};
+
+const RETURN_TYPES = {
+    RETURN: 'return',
+    RESUBMIT: 'resubmit'
+};
+
+const RETURN_TYPE_LABELS = {
+    [RETURN_TYPES.RETURN]: '退回',
+    [RETURN_TYPES.RESUBMIT]: '重提'
 };
 
 const USERS = {
@@ -158,6 +169,9 @@ function getDocStatusLabel(doc) {
     if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
         return '已办结';
     }
+    if (doc.isReturned) {
+        return '已退回';
+    }
     const statusMap = {
         [FLOW_NODES.REGISTER]: '待登记',
         [FLOW_NODES.PROPOSE]: '待批示',
@@ -172,6 +186,9 @@ function getDocStatusLabel(doc) {
 function getDocStatusClass(doc) {
     if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
         return 'status-completed';
+    }
+    if (doc.isReturned) {
+        return 'status-returned';
     }
     if (doc.currentNode === FLOW_NODES.COMPLETE) {
         return 'status-pending';
@@ -330,6 +347,16 @@ class DataStore {
                     changed = true;
                 }
             }
+
+            if (doc.returnRecords === undefined) {
+                doc.returnRecords = [];
+                changed = true;
+            }
+
+            if (doc.isReturned === undefined) {
+                doc.isReturned = false;
+                changed = true;
+            }
         });
         if (changed) {
             this.save();
@@ -372,6 +399,8 @@ class DataStore {
             createdBy: creator.id,
             createdByName: creator.name,
             supervisionRecords: [],
+            returnRecords: [],
+            isReturned: false,
             flowRecords: [{
                 node: FLOW_NODES.REGISTER,
                 status: NODE_STATUS.COMPLETED,
@@ -1022,12 +1051,15 @@ class DataStore {
                 if (doc.currentNode === FLOW_NODES.COMPLETE && !doc.archived) {
                     stats.myPending++;
                 }
+                if (doc.currentNode === FLOW_NODES.REGISTER && doc.isReturned) {
+                    stats.myPending++;
+                }
             } else if (role === ROLES.LEADER) {
                 if (doc.currentNode === FLOW_NODES.PROPOSE || doc.currentNode === FLOW_NODES.ASSIGN) {
                     stats.myPending++;
                 }
             } else if (role === ROLES.STAFF && user) {
-                if (this.canOperate(doc, role, user)) {
+                if (this.canOperate(doc, role, user) || this.canResubmit(doc, role, user)) {
                     stats.myPending++;
                 }
             }
@@ -1127,6 +1159,206 @@ class DataStore {
         stats.avgHandleDays = completedCount > 0 ? Math.round((totalHandleDays / completedCount) * 10) / 10 : 0;
 
         return stats;
+    }
+
+    canReturn(doc, role, user) {
+        if (!doc || !user || doc.archived || doc.isReturned) return false;
+
+        if (role === ROLES.LEADER) {
+            return doc.currentNode === FLOW_NODES.PROPOSE || doc.currentNode === FLOW_NODES.ASSIGN;
+        }
+
+        if (role === ROLES.OFFICE) {
+            return doc.currentNode === FLOW_NODES.COMPLETE && !doc.archived;
+        }
+
+        return false;
+    }
+
+    canResubmit(doc, role, user) {
+        if (!doc || !user || !doc.isReturned) return false;
+
+        if (role === ROLES.OFFICE) {
+            return doc.currentNode === FLOW_NODES.REGISTER;
+        }
+
+        if (role === ROLES.STAFF) {
+            if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+                if (doc.isMultiDept) {
+                    return isMainHandler(doc, user.id);
+                }
+                return doc.assignedUser === user.id;
+            }
+        }
+
+        return false;
+    }
+
+    returnDoc(docId, reason, operator, role) {
+        const doc = this.getDoc(docId);
+        if (!doc || !this.canReturn(doc, role, operator)) return null;
+
+        const now = new Date().toISOString();
+        const fromNode = doc.currentNode;
+        let toNode = null;
+
+        if (doc.currentNode === FLOW_NODES.PROPOSE || doc.currentNode === FLOW_NODES.ASSIGN) {
+            toNode = FLOW_NODES.REGISTER;
+        } else if (doc.currentNode === FLOW_NODES.COMPLETE) {
+            toNode = FLOW_NODES.FEEDBACK;
+        }
+
+        if (!toNode) return null;
+
+        const returnRecord = {
+            id: 'ret_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            type: RETURN_TYPES.RETURN,
+            fromNode: fromNode,
+            toNode: toNode,
+            reason: reason,
+            operatorId: operator.id,
+            operatorName: operator.name,
+            operatorDept: operator.dept,
+            time: now
+        };
+
+        doc.returnRecords = doc.returnRecords || [];
+        doc.returnRecords.push(returnRecord);
+
+        doc.flowRecords.push({
+            node: fromNode,
+            status: NODE_STATUS.RETURNED,
+            operatorId: operator.id,
+            operatorName: operator.name,
+            operatorDept: operator.dept,
+            time: now,
+            comment: reason,
+            attachments: [],
+            isReturn: true,
+            returnToNode: toNode
+        });
+
+        doc.currentNode = toNode;
+        doc.isReturned = true;
+
+        this.save();
+
+        if (toNode === FLOW_NODES.REGISTER) {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.DOC_RETURNED,
+                title: '公文被退回',
+                content: `《${doc.title}》被退回，请补充登记后重提`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toRole: ROLES.OFFICE
+            });
+        } else if (toNode === FLOW_NODES.FEEDBACK) {
+            const handlerUserIds = getAllHandlerUserIds(doc);
+            handlerUserIds.forEach(userId => {
+                messageStore.createMessage({
+                    type: MESSAGE_TYPES.DOC_RETURNED,
+                    title: '公文被退回',
+                    content: `《${doc.title}》被退回，请补充反馈后重提`,
+                    docId: doc.id,
+                    docTitle: doc.title,
+                    fromUserId: operator.id,
+                    fromUserName: operator.name,
+                    toUserId: userId
+                });
+            });
+            if (doc.assignedUser && !handlerUserIds.includes(doc.assignedUser)) {
+                messageStore.createMessage({
+                    type: MESSAGE_TYPES.DOC_RETURNED,
+                    title: '公文被退回',
+                    content: `《${doc.title}》被退回，请补充反馈后重提`,
+                    docId: doc.id,
+                    docTitle: doc.title,
+                    fromUserId: operator.id,
+                    fromUserName: operator.name,
+                    toUserId: doc.assignedUser
+                });
+            }
+        }
+
+        return doc;
+    }
+
+    resubmitDoc(docId, comment, operator, role) {
+        const doc = this.getDoc(docId);
+        if (!doc || !this.canResubmit(doc, role, operator)) return null;
+
+        const now = new Date().toISOString();
+        const fromNode = doc.currentNode;
+        let toNode = null;
+
+        if (doc.currentNode === FLOW_NODES.REGISTER) {
+            toNode = FLOW_NODES.PROPOSE;
+        } else if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+            toNode = FLOW_NODES.COMPLETE;
+        }
+
+        if (!toNode) return null;
+
+        const resubmitRecord = {
+            id: 'ret_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            type: RETURN_TYPES.RESUBMIT,
+            fromNode: fromNode,
+            toNode: toNode,
+            reason: comment,
+            operatorId: operator.id,
+            operatorName: operator.name,
+            operatorDept: operator.dept,
+            time: now
+        };
+
+        doc.returnRecords = doc.returnRecords || [];
+        doc.returnRecords.push(resubmitRecord);
+
+        doc.flowRecords.push({
+            node: fromNode,
+            status: NODE_STATUS.COMPLETED,
+            operatorId: operator.id,
+            operatorName: operator.name,
+            operatorDept: operator.dept,
+            time: now,
+            comment: comment,
+            attachments: [],
+            isResubmit: true,
+            resubmitToNode: toNode
+        });
+
+        doc.currentNode = toNode;
+        doc.isReturned = false;
+
+        this.save();
+
+        if (toNode === FLOW_NODES.PROPOSE) {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.DOC_RESUBMITTED,
+                title: '公文已重提',
+                content: `《${doc.title}》已补充登记并重提，请批示`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toRole: ROLES.LEADER
+            });
+        } else if (toNode === FLOW_NODES.COMPLETE) {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.DOC_RESUBMITTED,
+                title: '公文已重提',
+                content: `《${doc.title}》已补充反馈并重提，请归档`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toRole: ROLES.OFFICE
+            });
+        }
+
+        return doc;
     }
 
     canOperate(doc, role, user) {
@@ -1701,7 +1933,9 @@ const MESSAGE_TYPES = {
     DOC_FEEDBACK: 'doc_feedback',
     DOC_COMPLETED: 'doc_completed',
     DOC_ARCHIVED: 'doc_archived',
-    SUPERVISION: 'supervision'
+    SUPERVISION: 'supervision',
+    DOC_RETURNED: 'doc_returned',
+    DOC_RESUBMITTED: 'doc_resubmitted'
 };
 
 const MESSAGE_TYPE_LABELS = {
@@ -1711,7 +1945,9 @@ const MESSAGE_TYPE_LABELS = {
     [MESSAGE_TYPES.DOC_FEEDBACK]: '已反馈',
     [MESSAGE_TYPES.DOC_COMPLETED]: '待归档',
     [MESSAGE_TYPES.DOC_ARCHIVED]: '已归档',
-    [MESSAGE_TYPES.SUPERVISION]: '督办'
+    [MESSAGE_TYPES.SUPERVISION]: '督办',
+    [MESSAGE_TYPES.DOC_RETURNED]: '已退回',
+    [MESSAGE_TYPES.DOC_RESUBMITTED]: '已重提'
 };
 
 const MESSAGE_STORAGE_KEY = 'doc_flow_messages';
