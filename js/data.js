@@ -2043,6 +2043,7 @@ class DataStore {
             }
         ];
 
+        this.migrateData();
         this.save();
     }
 }
