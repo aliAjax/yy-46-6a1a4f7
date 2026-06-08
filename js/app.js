@@ -2,6 +2,11 @@ let currentRole = null;
 let currentUser = null;
 let currentPage = 'dashboard';
 let currentDocId = null;
+let currentDraftId = null;
+let draftAutoSaveTimer = null;
+let draftLastSavedAt = null;
+let isDraftFormDirty = false;
+let isDraftSaving = false;
 let currentFilters = {};
 let currentArchiveFilters = {};
 let currentSupervisionFilters = {};
@@ -11,6 +16,14 @@ let currentImportBatchId = null;
 let currentImportFilters = {};
 
 let currentAttachmentFilters = {};
+
+let currentDraftFilters = {};
+
+let currentFilterViewId = null;
+
+let registerAttachments = [];
+let operateAttachments = [];
+let resubmitAttachments = [];
 
 let loginSelectedRole = ROLES.OFFICE;
 
@@ -73,6 +86,9 @@ function logout() {
     currentRole = null;
     currentUser = null;
     currentPage = 'dashboard';
+    currentDocId = null;
+    currentDraftId = null;
+    registerAttachments = [];
     sessionStorage.removeItem('doc_flow_role');
     sessionStorage.removeItem('doc_flow_userid');
 
@@ -110,6 +126,9 @@ function renderNav() {
 
     if (currentRole === ROLES.OFFICE) {
         menuItems.push({ key: 'register', label: '收文登记', icon: '✍️' });
+        const draftCount = dataStore.getDraftStats(currentUser.id).total;
+        const draftBadge = draftCount > 0 ? `<span class="nav-badge">${draftCount > 99 ? '99+' : draftCount}</span>` : '';
+        menuItems.push({ key: 'drafts', label: '公文草稿箱', icon: '📝', badge: draftBadge });
         menuItems.push({ key: 'batchImport', label: '批量收文导入', icon: '📥' });
         menuItems.push({ key: 'archive', label: '归档库', icon: '📦' });
         menuItems.push({ key: 'userManage', label: '角色与人员管理', icon: '👥' });
@@ -136,6 +155,17 @@ function renderNav() {
 }
 
 function navigateTo(page, params = {}) {
+    if ((currentPage === 'register' || currentPage === 'draftEdit') && (page !== 'register' && page !== 'draftEdit')) {
+        clearDraftAutoSave();
+        if (isDraftFormDirty && currentDraftId) {
+            const formData = getRegisterFormData();
+            if (formData.title || formData.fromUnit || formData.content || (formData.attachments && formData.attachments.length > 0)) {
+                dataStore.updateDraft(currentDraftId, formData, currentUser);
+            }
+        }
+        isDraftFormDirty = false;
+    }
+
     currentPage = page;
     renderNav();
     const content = document.getElementById('contentArea');
@@ -160,7 +190,15 @@ function navigateTo(page, params = {}) {
             renderSupervisionCenter();
             break;
         case 'register':
+            currentDraftId = null;
             renderRegisterForm();
+            break;
+        case 'draftEdit':
+            currentDraftId = params.draftId || null;
+            renderRegisterForm();
+            break;
+        case 'drafts':
+            renderDraftList();
             break;
         case 'batchImport':
             renderBatchImportList();
@@ -488,6 +526,9 @@ function renderDocList() {
     const startDate = currentFilters.startDate || '';
     const endDate = currentFilters.endDate || '';
 
+    const views = filterViewStore.getViews();
+    const activeViewId = currentFilterViewId;
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">公文列表</h2>
@@ -495,6 +536,28 @@ function renderDocList() {
         </div>
 
         <div class="card">
+            <div class="filter-view-bar">
+                <div class="filter-view-label">常用视图：</div>
+                <div class="filter-view-tabs" id="filterViewTabs">
+                    <span class="filter-view-tab ${activeViewId === null ? 'active' : ''}" onclick="applyFilterView(null)" title="全部公文">
+                        全部
+                    </span>
+                    ${views.map(v => `
+                        <span class="filter-view-tab ${activeViewId === v.id ? 'active' : ''}" data-view-id="${v.id}" title="${escapeHtml(v.name)}">
+                            <span class="filter-view-tab-name" onclick="applyFilterView('${v.id}')">${escapeHtml(v.name)}</span>
+                            <span class="filter-view-tab-actions">
+                                <span class="filter-view-tab-btn" onclick="event.stopPropagation(); openSaveViewModal('${v.id}')" title="编辑视图">✏️</span>
+                                <span class="filter-view-tab-btn filter-view-tab-delete" onclick="event.stopPropagation(); deleteFilterView('${v.id}')" title="删除视图">🗑️</span>
+                            </span>
+                        </span>
+                    `).join('')}
+                </div>
+                <div class="filter-view-actions">
+                    <button class="btn btn-outline btn-sm filter-view-save-btn" onclick="openSaveViewModal()">
+                        💾 保存当前为视图
+                    </button>
+                </div>
+            </div>
             <div class="card-body">
                 <div class="search-bar list-search-bar">
                     <div class="form-group">
@@ -576,11 +639,14 @@ function applyFilters() {
         endDate: document.getElementById('searchEndDate').value,
         isMultiDept: isMultiDept
     };
+    currentFilterViewId = null;
+    updateFilterViewTabs();
     document.getElementById('docListTable').innerHTML = renderDocTable();
 }
 
 function resetFilters() {
     currentFilters = {};
+    currentFilterViewId = null;
     document.getElementById('searchKeyword').value = '';
     document.getElementById('searchStatus').value = '';
     document.getElementById('searchDept').value = '';
@@ -589,7 +655,272 @@ function resetFilters() {
     document.getElementById('searchMode').value = '';
     document.getElementById('searchStartDate').value = '';
     document.getElementById('searchEndDate').value = '';
+    updateFilterViewTabs();
     document.getElementById('docListTable').innerHTML = renderDocTable();
+}
+
+function applyFilterView(viewId) {
+    if (viewId === null) {
+        currentFilters = {};
+        currentFilterViewId = null;
+    } else {
+        const view = filterViewStore.getViewById(viewId);
+        if (!view) {
+            showToast('视图不存在', 'error');
+            return;
+        }
+        currentFilters = { ...view.filters };
+        currentFilterViewId = viewId;
+    }
+
+    if (document.getElementById('searchKeyword')) {
+        document.getElementById('searchKeyword').value = currentFilters.keyword || '';
+    }
+    if (document.getElementById('searchStatus')) {
+        document.getElementById('searchStatus').value = currentFilters.status || '';
+    }
+    if (document.getElementById('searchDept')) {
+        document.getElementById('searchDept').value = currentFilters.assignedDept || '';
+    }
+    if (document.getElementById('searchPriority')) {
+        document.getElementById('searchPriority').value = currentFilters.priority || '';
+    }
+    if (document.getElementById('searchCategory')) {
+        document.getElementById('searchCategory').value = currentFilters.category || '';
+    }
+    if (document.getElementById('searchMode')) {
+        const modeVal = currentFilters.isMultiDept === true ? 'multi' : (currentFilters.isMultiDept === false ? 'single' : '');
+        document.getElementById('searchMode').value = modeVal;
+    }
+    if (document.getElementById('searchStartDate')) {
+        document.getElementById('searchStartDate').value = currentFilters.startDate || '';
+    }
+    if (document.getElementById('searchEndDate')) {
+        document.getElementById('searchEndDate').value = currentFilters.endDate || '';
+    }
+
+    updateFilterViewTabs();
+    document.getElementById('docListTable').innerHTML = renderDocTable();
+    if (viewId) {
+        showToast('已切换到视图：' + filterViewStore.getViewById(viewId).name, 'success');
+    }
+}
+
+function updateFilterViewTabs() {
+    const tabsContainer = document.getElementById('filterViewTabs');
+    if (!tabsContainer) return;
+
+    const tabs = tabsContainer.querySelectorAll('.filter-view-tab');
+    tabs.forEach(tab => {
+        const viewId = tab.dataset.viewId || null;
+        if (currentFilterViewId === viewId) {
+            tab.classList.add('active');
+        } else {
+            tab.classList.remove('active');
+        }
+    });
+}
+
+function openSaveViewModal(viewId) {
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBody = document.getElementById('modalBody');
+
+    const isEdit = !!viewId;
+    const view = isEdit ? filterViewStore.getViewById(viewId) : null;
+
+    if (isEdit && !view) {
+        showToast('视图不存在', 'error');
+        return;
+    }
+
+    if (!isEdit) {
+        const hasFilters = currentFilters && (
+            currentFilters.keyword ||
+            currentFilters.status ||
+            currentFilters.assignedDept ||
+            currentFilters.priority
+        );
+        if (!hasFilters) {
+            showToast('请先设置筛选条件再保存视图', 'warning');
+            return;
+        }
+    }
+
+    const filters = isEdit ? view.filters : currentFilters;
+    const name = isEdit ? view.name : '';
+
+    const filterOptions = [
+        { key: 'keyword', label: '关键词（标题/文号）', value: filters.keyword || '', displayValue: filters.keyword || '' },
+        { key: 'status', label: '状态', value: filters.status || '', displayValue: filters.status ? getStatusLabelByNode(filters.status) : '' },
+        { key: 'assignedDept', label: '承办科室', value: filters.assignedDept || '', displayValue: filters.assignedDept || '' },
+        { key: 'priority', label: '紧急程度', value: filters.priority || '', displayValue: filters.priority ? (PRIORITY_LABELS[filters.priority] || filters.priority) : '' }
+    ];
+
+    modalTitle.textContent = isEdit ? '编辑筛选视图' : '保存筛选视图';
+    modalBody.innerHTML = `
+        <div class="form-group">
+            <label class="form-label">视图名称 <span class="form-required">*</span></label>
+            <input type="text" class="form-input" id="saveViewNameInput" placeholder="请输入视图名称" value="${escapeHtml(name)}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">选择要保存的筛选项</label>
+            <div class="filter-options-list">
+                ${filterOptions.map(opt => `
+                    <label class="filter-option-item">
+                        <input type="checkbox" class="filter-option-checkbox" data-field="${opt.key}"
+                            ${opt.value ? 'checked' : ''} ${!opt.value && !isEdit ? 'disabled' : ''}>
+                        <span class="filter-option-label">${opt.label}</span>
+                        ${opt.value ? `<span class="filter-option-value">${escapeHtml(opt.displayValue)}</span>` : ''}
+                    </label>
+                `).join('')}
+            </div>
+        </div>
+        <div style="text-align:right; margin-top:20px;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="doSaveView(${isEdit ? `'${viewId}'` : 'null'})">${isEdit ? '保存修改' : '保存'}</button>
+        </div>
+    `;
+
+    modal.classList.remove('hidden');
+    setTimeout(() => {
+        document.getElementById('saveViewNameInput').focus();
+    }, 100);
+}
+
+function doSaveView(viewId) {
+    const nameInput = document.getElementById('saveViewNameInput');
+    const name = nameInput.value.trim();
+
+    if (!name) {
+        showToast('请输入视图名称', 'warning');
+        nameInput.focus();
+        return;
+    }
+
+    const checkboxes = document.querySelectorAll('.filter-option-checkbox:checked');
+    const selectedFields = Array.from(checkboxes).map(cb => cb.dataset.field);
+
+    if (selectedFields.length === 0) {
+        showToast('请至少选择一个筛选项', 'warning');
+        return;
+    }
+
+    const sourceFilters = viewId ? filterViewStore.getViewById(viewId).filters : currentFilters;
+    const filtersToSave = {};
+    selectedFields.forEach(field => {
+        if (sourceFilters[field] !== undefined && sourceFilters[field] !== '' && sourceFilters[field] !== null) {
+            filtersToSave[field] = sourceFilters[field];
+        }
+    });
+
+    let result;
+    if (viewId) {
+        result = filterViewStore.updateView(viewId, name, filtersToSave);
+    } else {
+        result = filterViewStore.createView(name, filtersToSave);
+    }
+
+    if (result.success) {
+        closeModal();
+        currentFilterViewId = result.view.id;
+        if (!viewId) {
+            currentFilters = { ...result.view.filters };
+        }
+        renderDocList();
+        showToast(viewId ? '视图修改成功' : '视图保存成功', 'success');
+    } else {
+        showToast(result.error, 'error');
+    }
+}
+
+function applyFilterView(viewId) {
+    if (viewId === null) {
+        currentFilters = {};
+        currentFilterViewId = null;
+    } else {
+        const view = filterViewStore.getViewById(viewId);
+        if (!view) {
+            showToast('视图不存在', 'error');
+            return;
+        }
+        currentFilters = { ...view.filters };
+        currentFilterViewId = viewId;
+    }
+
+    syncFilterControls();
+    updateFilterViewTabs();
+    document.getElementById('docListTable').innerHTML = renderDocTable();
+
+    if (viewId) {
+        const view = filterViewStore.getViewById(viewId);
+        showToast('已切换到视图：' + view.name, 'success');
+    }
+}
+
+function syncFilterControls() {
+    if (document.getElementById('searchKeyword')) {
+        document.getElementById('searchKeyword').value = currentFilters.keyword || '';
+    }
+    if (document.getElementById('searchStatus')) {
+        document.getElementById('searchStatus').value = currentFilters.status || '';
+    }
+    if (document.getElementById('searchDept')) {
+        document.getElementById('searchDept').value = currentFilters.assignedDept || '';
+    }
+    if (document.getElementById('searchPriority')) {
+        document.getElementById('searchPriority').value = currentFilters.priority || '';
+    }
+    if (document.getElementById('searchCategory')) {
+        document.getElementById('searchCategory').value = currentFilters.category || '';
+    }
+    if (document.getElementById('searchMode')) {
+        const modeVal = currentFilters.isMultiDept === true ? 'multi' : (currentFilters.isMultiDept === false ? 'single' : '');
+        document.getElementById('searchMode').value = modeVal;
+    }
+    if (document.getElementById('searchStartDate')) {
+        document.getElementById('searchStartDate').value = currentFilters.startDate || '';
+    }
+    if (document.getElementById('searchEndDate')) {
+        document.getElementById('searchEndDate').value = currentFilters.endDate || '';
+    }
+}
+
+function updateFilterViewTabs() {
+    const tabsContainer = document.getElementById('filterViewTabs');
+    if (!tabsContainer) return;
+
+    const tabs = tabsContainer.querySelectorAll('.filter-view-tab');
+    tabs.forEach(tab => {
+        const viewId = tab.dataset.viewId || null;
+        if (currentFilterViewId === viewId) {
+            tab.classList.add('active');
+        } else {
+            tab.classList.remove('active');
+        }
+    });
+}
+
+function deleteFilterView(viewId) {
+    const view = filterViewStore.getViewById(viewId);
+    if (!view) return;
+
+    if (!confirm(`确定要删除视图"${view.name}"吗？`)) {
+        return;
+    }
+
+    const result = filterViewStore.deleteView(viewId);
+    if (result.success) {
+        if (currentFilterViewId === viewId) {
+            currentFilterViewId = null;
+            currentFilters = {};
+            syncFilterControls();
+        }
+        renderDocList();
+        showToast('视图已删除', 'success');
+    } else {
+        showToast(result.error, 'error');
+    }
 }
 
 function renderDocTable() {
@@ -1216,6 +1547,11 @@ function renderAttachmentCenter() {
         fileTypeOptions.push({ value: key, label: label });
     });
 
+    const categoryOptions = [{ value: '', label: '全部分类' }];
+    Object.entries(ATTACHMENT_CATEGORY_LABELS).forEach(([key, label]) => {
+        categoryOptions.push({ value: key, label: label });
+    });
+
     const uploaderOptions = [{ value: '', label: '全部上传人' }];
     userStore.getAllUsers().forEach(u => {
         uploaderOptions.push({ value: u.id, label: `${u.name}（${u.dept}）` });
@@ -1226,6 +1562,7 @@ function renderAttachmentCenter() {
     const uploaderId = currentAttachmentFilters.uploaderId || '';
     const uploaderDept = currentAttachmentFilters.uploaderDept || '';
     const fileType = currentAttachmentFilters.fileType || '';
+    const category = currentAttachmentFilters.category || '';
     const startDate = currentAttachmentFilters.startDate || '';
     const endDate = currentAttachmentFilters.endDate || '';
 
@@ -1300,6 +1637,12 @@ function renderAttachmentCenter() {
                         </select>
                     </div>
                     <div class="form-group">
+                        <label class="form-label">附件分类</label>
+                        <select class="form-select" id="attCategory" onchange="applyAttachmentFilters()">
+                            ${categoryOptions.map(o => `<option value="${o.value}" ${o.value === category ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label class="form-label">开始日期</label>
                         <input type="date" class="form-input" id="attStartDate" value="${startDate}" onchange="applyAttachmentFilters()">
                     </div>
@@ -1330,6 +1673,7 @@ function applyAttachmentFilters() {
         uploaderId: document.getElementById('attUploader').value,
         uploaderDept: document.getElementById('attDept').value,
         fileType: document.getElementById('attFileType').value,
+        category: document.getElementById('attCategory').value,
         startDate: document.getElementById('attStartDate').value,
         endDate: document.getElementById('attEndDate').value
     };
@@ -1343,6 +1687,7 @@ function resetAttachmentFilters() {
     document.getElementById('attDept').value = '';
     document.getElementById('attUploader').value = '';
     document.getElementById('attFileType').value = '';
+    document.getElementById('attCategory').value = '';
     document.getElementById('attStartDate').value = '';
     document.getElementById('attEndDate').value = '';
     document.getElementById('attachmentListTable').innerHTML = renderAttachmentTable();
@@ -1382,6 +1727,7 @@ function renderAttachmentTable() {
                     <tr>
                         <th>文件</th>
                         <th>类型</th>
+                        <th>附件分类</th>
                         <th>所属公文</th>
                         <th>上传节点</th>
                         <th>上传人</th>
@@ -1396,10 +1742,14 @@ function renderAttachmentTable() {
                             <td>
                                 <div class="attachment-file-cell">
                                     <span class="attachment-file-icon">${att.fileIcon}</span>
-                                    <span class="attachment-file-name" title="${att.fileName}">${att.fileName}</span>
+                                    <div>
+                                        <div class="attachment-file-name" title="${att.fileName}">${att.fileName}</div>
+                                        ${att.remark ? `<div class="attachment-remark-text" title="${escapeHtml(att.remark)}">备注：${escapeHtml(att.remark)}</div>` : ''}
+                                    </div>
                                 </div>
                             </td>
                             <td><span class="file-type-badge file-type-${att.fileType}">${att.fileTypeLabel}</span></td>
+                            <td><span class="att-category-badge att-cat-${att.category}">${att.categoryLabel}</span></td>
                             <td class="td-ellipsis" title="${att.docTitle}">
                                 <div style="font-size:12px; color:#999; margin-bottom:2px;">${att.docId}</div>
                                 <div>${att.docTitle}</div>
@@ -1441,13 +1791,41 @@ function goToDocFromAttachment(docId, recordId) {
 }
 
 function renderRegisterForm() {
+    clearDraftAutoSave();
+    isDraftFormDirty = false;
+    isDraftSaving = false;
+
     const content = document.getElementById('contentArea');
+    const isEditDraft = !!currentDraftId;
+    let draft = null;
+    let pageTitle = '收文登记';
+    let backButton = "navigateTo('list')";
+    let backLabel = '返回列表';
+
+    if (isEditDraft) {
+        draft = dataStore.getDraft(currentDraftId);
+        if (!draft) {
+            content.innerHTML = '<div class="empty-state"><p>草稿不存在</p><button class="btn btn-primary" onclick="navigateTo(\'drafts\')">返回草稿箱</button></div>';
+            return;
+        }
+        pageTitle = '编辑草稿';
+        backButton = "navigateTo('drafts')";
+        backLabel = '返回草稿箱';
+        draftLastSavedAt = draft.updatedAt;
+    } else {
+        draftLastSavedAt = null;
+    }
 
     content.innerHTML = `
         <div class="page-header">
-            <h2 class="page-title">收文登记</h2>
-            <button class="btn btn-default" onclick="navigateTo('list')">返回列表</button>
+            <h2 class="page-title">${pageTitle}</h2>
+            <div class="page-header-actions">
+                <span id="draftSaveStatus" class="draft-save-status hidden"></span>
+                <button class="btn btn-default" onclick="${backButton}">${backLabel}</button>
+            </div>
         </div>
+
+        ${isEditDraft ? `<div class="draft-info-bar"><span class="draft-icon">📝</span><span id="draftLastSavedText">草稿最后保存时间：${formatDateTime(draft.updatedAt)}</span></div>` : ''}
 
         <div class="card">
             <div class="card-body">
@@ -1486,6 +1864,7 @@ function renderRegisterForm() {
                             <option value="批复">批复</option>
                             <option value="函">函</option>
                             <option value="会议纪要">会议纪要</option>
+                            <option value="意见">意见</option>
                             <option value="其他">其他</option>
                         </select>
                     </div>
@@ -1505,18 +1884,207 @@ function renderRegisterForm() {
                 </div>
 
                 <div style="margin-top:24px; text-align:right;">
-                    <button class="btn btn-default" onclick="navigateTo('list')" style="margin-right:8px;">取消</button>
-                    <button class="btn btn-primary btn-lg" onclick="submitRegister()">提交登记</button>
+                    <button class="btn btn-default" onclick="${backButton}" style="margin-right:8px;">取消</button>
+                    <button class="btn btn-default" onclick="saveDraftManually()" style="margin-right:8px;" id="btnSaveDraft">💾 保存草稿</button>
+                    <button class="btn btn-primary btn-lg" onclick="submitRegister()">${isEditDraft ? '提交草稿' : '提交登记'}</button>
                 </div>
             </div>
         </div>
     `;
 
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('regDocDate').value = today;
+    if (isEditDraft && draft) {
+        document.getElementById('regTitle').value = draft.title || '';
+        document.getElementById('regFromUnit').value = draft.fromUnit || '';
+        document.getElementById('regDocNumber').value = draft.docNumber || '';
+        document.getElementById('regDocDate').value = draft.docDate || '';
+        document.getElementById('regPriority').value = draft.priority || 'normal';
+        document.getElementById('regCategory').value = draft.category || '';
+        document.getElementById('regContent').value = draft.content || '';
+
+        registerAttachments = [...(draft.attachments || [])];
+        renderAttachmentList('regAttachmentsList', registerAttachments);
+    } else {
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('regDocDate').value = today;
+    }
+
+    setupDraftFormListeners();
 }
 
-let registerAttachments = [];
+function setupDraftFormListeners() {
+    const formInputs = [
+        'regTitle', 'regFromUnit', 'regDocNumber', 'regDocDate',
+        'regPriority', 'regCategory', 'regContent'
+    ];
+
+    formInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('input', onDraftFormChange);
+            el.addEventListener('change', onDraftFormChange);
+        }
+    });
+}
+
+function onDraftFormChange() {
+    isDraftFormDirty = true;
+    updateDraftSaveStatus('unsaved');
+    scheduleAutoSave();
+}
+
+function scheduleAutoSave() {
+    if (draftAutoSaveTimer) {
+        clearTimeout(draftAutoSaveTimer);
+    }
+    draftAutoSaveTimer = setTimeout(() => {
+        autoSaveDraft();
+    }, 3000);
+}
+
+function clearDraftAutoSave() {
+    if (draftAutoSaveTimer) {
+        clearTimeout(draftAutoSaveTimer);
+        draftAutoSaveTimer = null;
+    }
+}
+
+function autoSaveDraft() {
+    if (!isDraftFormDirty || isDraftSaving) return;
+
+    const title = document.getElementById('regTitle')?.value.trim() || '';
+    const fromUnit = document.getElementById('regFromUnit')?.value.trim() || '';
+
+    if (!title && !fromUnit && registerAttachments.length === 0) {
+        isDraftFormDirty = false;
+        updateDraftSaveStatus('empty');
+        return;
+    }
+
+    isDraftSaving = true;
+    updateDraftSaveStatus('saving');
+
+    const formData = getRegisterFormData();
+
+    setTimeout(() => {
+        try {
+            if (currentDraftId) {
+                const draft = dataStore.updateDraft(currentDraftId, formData, currentUser);
+                if (draft) {
+                    draftLastSavedAt = draft.updatedAt;
+                    isDraftFormDirty = false;
+                    updateDraftSaveStatus('saved');
+                    updateDraftLastSavedText(draft.updatedAt);
+                }
+            } else {
+                const draft = dataStore.createDraft(formData, currentUser);
+                currentDraftId = draft.id;
+                draftLastSavedAt = draft.updatedAt;
+                isDraftFormDirty = false;
+                updateDraftSaveStatus('saved');
+                updateDraftInfoBar();
+            }
+        } catch (e) {
+            console.error('自动保存失败', e);
+            updateDraftSaveStatus('error');
+        }
+        isDraftSaving = false;
+    }, 300);
+}
+
+function saveDraftManually() {
+    clearDraftAutoSave();
+    const title = document.getElementById('regTitle')?.value.trim() || '';
+    const fromUnit = document.getElementById('regFromUnit')?.value.trim() || '';
+
+    if (!title && !fromUnit && registerAttachments.length === 0) {
+        showToast('请至少填写一项内容后再保存草稿', 'warning');
+        return;
+    }
+
+    isDraftSaving = true;
+    updateDraftSaveStatus('saving');
+
+    const formData = getRegisterFormData();
+
+    if (currentDraftId) {
+        const draft = dataStore.updateDraft(currentDraftId, formData, currentUser);
+        if (draft) {
+            draftLastSavedAt = draft.updatedAt;
+            isDraftFormDirty = false;
+            isDraftSaving = false;
+            updateDraftSaveStatus('saved');
+            updateDraftLastSavedText(draft.updatedAt);
+            showToast('草稿已保存');
+        } else {
+            isDraftSaving = false;
+            updateDraftSaveStatus('error');
+            showToast('保存失败', 'error');
+        }
+    } else {
+        const draft = dataStore.createDraft(formData, currentUser);
+        currentDraftId = draft.id;
+        draftLastSavedAt = draft.updatedAt;
+        isDraftFormDirty = false;
+        isDraftSaving = false;
+        updateDraftSaveStatus('saved');
+        updateDraftInfoBar();
+        showToast('草稿已保存');
+    }
+}
+
+function updateDraftSaveStatus(status) {
+    const statusEl = document.getElementById('draftSaveStatus');
+    if (!statusEl) return;
+
+    statusEl.classList.remove('hidden');
+
+    switch (status) {
+        case 'saving':
+            statusEl.className = 'draft-save-status saving';
+            statusEl.innerHTML = '⏳ 正在保存...';
+            break;
+        case 'saved':
+            statusEl.className = 'draft-save-status saved';
+            statusEl.innerHTML = '✓ 已自动保存';
+            break;
+        case 'unsaved':
+            statusEl.className = 'draft-save-status unsaved';
+            statusEl.innerHTML = '● 有未保存的更改';
+            break;
+        case 'error':
+            statusEl.className = 'draft-save-status error';
+            statusEl.innerHTML = '✗ 保存失败';
+            break;
+        case 'empty':
+        default:
+            statusEl.classList.add('hidden');
+            break;
+    }
+}
+
+function updateDraftLastSavedText(time) {
+    const textEl = document.getElementById('draftLastSavedText');
+    if (textEl) {
+        textEl.textContent = '草稿最后保存时间：' + formatDateTime(time);
+    }
+}
+
+function updateDraftInfoBar() {
+    const infoBar = document.querySelector('.draft-info-bar');
+    if (!infoBar && draftLastSavedAt) {
+        const header = document.querySelector('.page-header');
+        if (header) {
+            const bar = document.createElement('div');
+            bar.className = 'draft-info-bar';
+            bar.innerHTML = `<span class="draft-icon">📝</span><span id="draftLastSavedText">草稿最后保存时间：${formatDateTime(draftLastSavedAt)}</span>`;
+            header.after(bar);
+        }
+    }
+}
+
+function saveDraft() {
+    saveDraftManually();
+}
 
 function handleFileSelect(input, listId) {
     const files = input.files;
@@ -1527,22 +2095,16 @@ function handleFileSelect(input, listId) {
         const attachment = {
             name: file.name,
             size: formatFileSize(file.size),
-            id: 'att_' + Date.now() + '_' + i
+            id: 'att_' + Date.now() + '_' + i,
+            category: ATTACHMENT_CATEGORIES.OTHER,
+            remark: ''
         };
 
         if (listId === 'regAttachmentsList') {
             registerAttachments.push(attachment);
+            onDraftFormChange();
+            renderAttachmentList('regAttachmentsList', registerAttachments);
         }
-
-        const item = document.createElement('div');
-        item.className = 'attachment-item';
-        item.innerHTML = `
-            <span class="attachment-icon">📄</span>
-            <span class="attachment-name">${attachment.name}</span>
-            <span class="attachment-size">${attachment.size}</span>
-            <a class="action-link" onclick="this.parentElement.remove(); removeAttachment('${attachment.id}', '${listId}')">删除</a>
-        `;
-        list.appendChild(item);
     }
 
     input.value = '';
@@ -1551,6 +2113,96 @@ function handleFileSelect(input, listId) {
 function removeAttachment(id, listId) {
     if (listId === 'regAttachmentsList') {
         registerAttachments = registerAttachments.filter(a => a.id !== id);
+        onDraftFormChange();
+        renderAttachmentList('regAttachmentsList', registerAttachments);
+    }
+}
+
+function renderAttachmentList(listId, attachments) {
+    const list = document.getElementById(listId);
+    if (!list) return;
+    
+    list.innerHTML = '';
+    attachments.forEach(att => {
+        const item = document.createElement('div');
+        item.className = 'attachment-item attachment-item-editable';
+        item.innerHTML = `
+            <div class="attachment-item-header">
+                <span class="attachment-icon">${getFileIcon(att.name)}</span>
+                <span class="attachment-name" title="${att.name}">${att.name}</span>
+                <span class="attachment-size">${att.size}</span>
+                <a class="action-link action-delete" onclick="removeAttachment('${att.id}', '${listId}')">删除</a>
+            </div>
+            <div class="attachment-item-body">
+                <div class="attachment-item-field">
+                    <label class="attachment-item-label">附件分类：</label>
+                    <select class="form-select form-select-sm" onchange="updateAttachmentCategory('${att.id}', '${listId}', this.value)">
+                        ${Object.entries(ATTACHMENT_CATEGORY_LABELS).map(([key, label]) =>
+                            `<option value="${key}" ${att.category === key ? 'selected' : ''}>${label}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+                <div class="attachment-item-field">
+                    <label class="attachment-item-label">备注：</label>
+                    <input type="text" class="form-input form-input-sm" placeholder="请输入备注" 
+                           value="${escapeHtml(att.remark || '')}"
+                           onchange="updateAttachmentRemark('${att.id}', '${listId}', this.value)">
+                </div>
+            </div>
+        `;
+        list.appendChild(item);
+    });
+}
+
+function updateAttachmentCategory(attId, listId, category) {
+    if (listId === 'regAttachmentsList') {
+        const att = registerAttachments.find(a => a.id === attId);
+        if (att) {
+            att.category = category;
+            onDraftFormChange();
+        }
+    }
+}
+
+function updateAttachmentRemark(attId, listId, remark) {
+    if (listId === 'regAttachmentsList') {
+        const att = registerAttachments.find(a => a.id === attId);
+        if (att) {
+            att.remark = remark;
+            onDraftFormChange();
+        }
+    }
+}
+
+function getRegisterFormData() {
+    return {
+        title: document.getElementById('regTitle').value.trim(),
+        fromUnit: document.getElementById('regFromUnit').value.trim(),
+        docNumber: document.getElementById('regDocNumber').value.trim(),
+        docDate: document.getElementById('regDocDate').value,
+        priority: document.getElementById('regPriority').value,
+        category: document.getElementById('regCategory').value,
+        content: document.getElementById('regContent').value.trim(),
+        attachments: [...registerAttachments]
+    };
+}
+
+function saveDraft() {
+    const formData = getRegisterFormData();
+
+    if (currentDraftId) {
+        const draft = dataStore.updateDraft(currentDraftId, formData, currentUser);
+        if (draft) {
+            showToast('草稿已保存');
+            renderRegisterForm();
+        } else {
+            showToast('保存失败', 'error');
+        }
+    } else {
+        const draft = dataStore.createDraft(formData, currentUser);
+        currentDraftId = draft.id;
+        showToast('草稿已保存');
+        renderRegisterForm();
     }
 }
 
@@ -1567,22 +2219,399 @@ function submitRegister() {
         return;
     }
 
-    const docData = {
-        title: title,
-        fromUnit: fromUnit,
-        docNumber: document.getElementById('regDocNumber').value.trim(),
-        docDate: document.getElementById('regDocDate').value,
-        priority: document.getElementById('regPriority').value,
-        category: document.getElementById('regCategory').value,
-        content: document.getElementById('regContent').value.trim(),
-        attachments: registerAttachments
+    if (currentDraftId) {
+        if (isDraftFormDirty) {
+            const formData = getRegisterFormData();
+            const updated = dataStore.updateDraft(currentDraftId, formData, currentUser);
+            if (!updated) {
+                showToast('保存最新修改失败，请重试', 'error');
+                return;
+            }
+        }
+
+        if (!confirm('确定要提交这篇草稿吗？\n\n提交后将：\n1. 生成正式的公文文号\n2. 自动进入待批示流程\n3. 从草稿箱中移除')) {
+            return;
+        }
+
+        const result = dataStore.submitDraft(currentDraftId, currentUser);
+        if (result && result.success) {
+            registerAttachments = [];
+            currentDraftId = null;
+            clearDraftAutoSave();
+            isDraftFormDirty = false;
+            showToast('提交成功，已生成正式公文：' + result.doc.id);
+            navigateTo('detail', { id: result.doc.id });
+        } else {
+            showToast(result && result.error ? result.error : '提交失败', 'error');
+        }
+    } else {
+        if (!confirm('确定要提交这份公文登记吗？\n\n提交后将生成正式公文文号并进入待批示流程。')) {
+            return;
+        }
+
+        const docData = getRegisterFormData();
+        const doc = dataStore.createDoc(docData, currentUser);
+        registerAttachments = [];
+        showToast('收文登记成功：' + doc.id);
+        navigateTo('detail', { id: doc.id });
+    }
+}
+
+function renderDraftList() {
+    const content = document.getElementById('contentArea');
+    const keyword = currentDraftFilters.keyword || '';
+    const priority = currentDraftFilters.priority || '';
+    const category = currentDraftFilters.category || '';
+    const dateFrom = currentDraftFilters.dateFrom || '';
+    const dateTo = currentDraftFilters.dateTo || '';
+    const sortField = currentDraftFilters.sortField || 'updatedAt';
+    const sortOrder = currentDraftFilters.sortOrder || 'desc';
+
+    content.innerHTML = `
+        <div class="page-header">
+            <h2 class="page-title">公文草稿箱</h2>
+            <button class="btn btn-primary" onclick="navigateTo('register')">+ 新建草稿</button>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="search-bar draft-search-bar">
+                    <div class="form-group">
+                        <label class="form-label">关键词</label>
+                        <input type="text" class="form-input" id="draftSearchKeyword" placeholder="标题、来文单位、来文字号"
+                               value="${keyword}"
+                               onkeyup="if(event.key==='Enter') applyDraftFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">紧急程度</label>
+                        <select class="form-select" id="draftFilterPriority" onchange="applyDraftFilters()">
+                            <option value="">全部</option>
+                            <option value="normal" ${priority === 'normal' ? 'selected' : ''}>普通</option>
+                            <option value="high" ${priority === 'high' ? 'selected' : ''}>加急</option>
+                            <option value="urgent" ${priority === 'urgent' ? 'selected' : ''}>特急</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">公文类别</label>
+                        <select class="form-select" id="draftFilterCategory" onchange="applyDraftFilters()">
+                            <option value="">全部</option>
+                            <option value="通知" ${category === '通知' ? 'selected' : ''}>通知</option>
+                            <option value="请示" ${category === '请示' ? 'selected' : ''}>请示</option>
+                            <option value="报告" ${category === '报告' ? 'selected' : ''}>报告</option>
+                            <option value="批复" ${category === '批复' ? 'selected' : ''}>批复</option>
+                            <option value="函" ${category === '函' ? 'selected' : ''}>函</option>
+                            <option value="会议纪要" ${category === '会议纪要' ? 'selected' : ''}>会议纪要</option>
+                            <option value="意见" ${category === '意见' ? 'selected' : ''}>意见</option>
+                            <option value="其他" ${category === '其他' ? 'selected' : ''}>其他</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">保存日期起</label>
+                        <input type="date" class="form-input" id="draftFilterDateFrom" value="${dateFrom}" onchange="applyDraftFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">保存日期止</label>
+                        <input type="date" class="form-input" id="draftFilterDateTo" value="${dateTo}" onchange="applyDraftFilters()">
+                    </div>
+                    <div class="search-actions">
+                        <button class="btn btn-primary" onclick="applyDraftFilters()">🔍 查询</button>
+                        <button class="btn btn-default" onclick="resetDraftFilters()">重置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body" style="padding:0;" id="draftListTable">
+                ${renderDraftTable()}
+            </div>
+        </div>
+    `;
+}
+
+function renderDraftTable() {
+    const filters = {
+        userId: currentUser.id,
+        keyword: currentDraftFilters.keyword || '',
+        priority: currentDraftFilters.priority || '',
+        category: currentDraftFilters.category || '',
+        dateFrom: currentDraftFilters.dateFrom || '',
+        dateTo: currentDraftFilters.dateTo || '',
+        sortField: currentDraftFilters.sortField || 'updatedAt',
+        sortOrder: currentDraftFilters.sortOrder || 'desc'
     };
 
-    const doc = dataStore.createDoc(docData, currentUser);
-    registerAttachments = [];
+    const drafts = dataStore.listDrafts(filters);
 
-    showToast('收文登记成功！');
-    navigateTo('detail', { id: doc.id });
+    if (drafts.length === 0) {
+        return `
+            <div class="empty-state" style="padding:60px 20px;">
+                <div class="empty-icon">📝</div>
+                <p>暂无符合条件的草稿</p>
+                <button class="btn btn-primary" onclick="navigateTo('register')">去登记新草稿</button>
+            </div>
+        `;
+    }
+
+    const sortField = currentDraftFilters.sortField || 'updatedAt';
+    const sortOrder = currentDraftFilters.sortOrder || 'desc';
+
+    return `
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="width:35%; cursor:pointer;" onclick="sortDrafts('title')">
+                        公文标题 ${getSortIcon('title', sortField, sortOrder)}
+                    </th>
+                    <th style="width:15%; cursor:pointer;" onclick="sortDrafts('fromUnit')">
+                        来文单位 ${getSortIcon('fromUnit', sortField, sortOrder)}
+                    </th>
+                    <th style="width:10%;">紧急程度</th>
+                    <th style="width:8%;">附件数</th>
+                    <th style="width:12%; cursor:pointer;" onclick="sortDrafts('createdAt')">
+                        创建时间 ${getSortIcon('createdAt', sortField, sortOrder)}
+                    </th>
+                    <th style="width:10%; cursor:pointer;" onclick="sortDrafts('updatedAt')">
+                        最后保存 ${getSortIcon('updatedAt', sortField, sortOrder)}
+                    </th>
+                    <th style="width:10%;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${drafts.map(draft => {
+                    const attachmentCount = (draft.attachments && draft.attachments.length) || 0;
+                    
+                    return `
+                        <tr class="draft-row" data-id="${draft.id}" ondblclick="viewDraftDetail('${draft.id}')">
+                            <td>
+                                <div class="doc-title-cell">
+                                    <span class="draft-badge">草稿</span>
+                                    <span class="doc-title-text">${draft.title || '（无标题）'}</span>
+                                </div>
+                                ${draft.docNumber ? `<div class="doc-subtitle">${draft.docNumber}</div>` : ''}
+                            </td>
+                            <td>${draft.fromUnit || '-'}</td>
+                            <td>${getPriorityLabel(draft.priority)}</td>
+                            <td>${attachmentCount} 个</td>
+                            <td>${formatDateTime(draft.createdAt)}</td>
+                            <td>${formatDateTime(draft.updatedAt)}</td>
+                            <td>
+                                <div class="table-actions">
+                                    <button class="btn btn-sm btn-default" onclick="viewDraftDetail('${draft.id}'); event.stopPropagation();">查看</button>
+                                    <button class="btn btn-sm btn-default" onclick="editDraft('${draft.id}'); event.stopPropagation();">编辑</button>
+                                    <button class="btn btn-sm btn-primary" onclick="submitDraftFromList('${draft.id}'); event.stopPropagation();">提交</button>
+                                    <button class="btn btn-sm btn-danger" onclick="deleteDraftConfirm('${draft.id}'); event.stopPropagation();">删除</button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+        <div class="table-footer">共 ${drafts.length} 条草稿</div>
+    `;
+}
+
+function getSortIcon(field, currentField, currentOrder) {
+    if (field !== currentField) {
+        return '↕';
+    }
+    return currentOrder === 'asc' ? '↑' : '↓';
+}
+
+function sortDrafts(field) {
+    if (currentDraftFilters.sortField === field) {
+        currentDraftFilters.sortOrder = currentDraftFilters.sortOrder === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentDraftFilters.sortField = field;
+        currentDraftFilters.sortOrder = 'desc';
+    }
+    document.getElementById('draftListTable').innerHTML = renderDraftTable();
+}
+
+function applyDraftFilters() {
+    currentDraftFilters.keyword = document.getElementById('draftSearchKeyword').value.trim();
+    currentDraftFilters.priority = document.getElementById('draftFilterPriority').value;
+    currentDraftFilters.category = document.getElementById('draftFilterCategory').value;
+    currentDraftFilters.dateFrom = document.getElementById('draftFilterDateFrom').value;
+    currentDraftFilters.dateTo = document.getElementById('draftFilterDateTo').value;
+    document.getElementById('draftListTable').innerHTML = renderDraftTable();
+}
+
+function resetDraftFilters() {
+    currentDraftFilters = {};
+    renderDraftList();
+}
+
+function viewDraftDetail(draftId) {
+    const draft = dataStore.getDraft(draftId);
+    if (!draft) {
+        showToast('草稿不存在', 'error');
+        return;
+    }
+
+    const attachmentCount = (draft.attachments && draft.attachments.length) || 0;
+
+    const modal = document.createElement('div');
+    modal.className = 'draft-detail-modal';
+    modal.id = 'draftDetailModal';
+    modal.onclick = function(e) {
+        if (e.target === modal) {
+            closeDraftDetailModal();
+        }
+    };
+
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">草稿详情</div>
+                <span class="modal-close" onclick="closeDraftDetailModal()">×</span>
+            </div>
+            <div class="modal-body">
+                <div class="draft-detail-item">
+                    <div class="draft-detail-label">公文标题</div>
+                    <div class="draft-detail-value">${draft.title || '（无标题）'}</div>
+                </div>
+                <div class="draft-detail-item">
+                    <div class="draft-detail-label">来文单位</div>
+                    <div class="draft-detail-value">${draft.fromUnit || '-'}</div>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="draft-detail-item">
+                        <div class="draft-detail-label">来文字号</div>
+                        <div class="draft-detail-value">${draft.docNumber || '-'}</div>
+                    </div>
+                    <div class="draft-detail-item">
+                        <div class="draft-detail-label">来文日期</div>
+                        <div class="draft-detail-value">${draft.docDate || '-'}</div>
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="draft-detail-item">
+                        <div class="draft-detail-label">紧急程度</div>
+                        <div class="draft-detail-value">${getPriorityLabel(draft.priority)}</div>
+                    </div>
+                    <div class="draft-detail-item">
+                        <div class="draft-detail-label">公文类别</div>
+                        <div class="draft-detail-value">${draft.category || '-'}</div>
+                    </div>
+                </div>
+                <div class="draft-detail-item">
+                    <div class="draft-detail-label">内容摘要</div>
+                    <div class="draft-detail-value" style="white-space:pre-wrap;">${draft.content || '（无内容）'}</div>
+                </div>
+                <div class="draft-detail-item">
+                    <div class="draft-detail-label">附件（${attachmentCount} 个）</div>
+                    <div class="draft-detail-value">
+                        ${attachmentCount > 0 ? draft.attachments.map(att => `
+                            <div style="padding:4px 0;">📄 ${att.name} (${att.size})</div>
+                        `).join('') : '（无附件）'}
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #f0f0f0;">
+                    <div class="draft-detail-item">
+                        <div class="draft-detail-label">创建时间</div>
+                        <div class="draft-detail-value">${formatDateTime(draft.createdAt)}</div>
+                    </div>
+                    <div class="draft-detail-item">
+                        <div class="draft-detail-label">最后保存</div>
+                        <div class="draft-detail-value">${formatDateTime(draft.updatedAt)}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-default" onclick="closeDraftDetailModal()">关闭</button>
+                <button class="btn btn-default" onclick="editDraft('${draft.id}')">编辑草稿</button>
+                <button class="btn btn-primary" onclick="submitDraftFromDetail('${draft.id}')">提交草稿</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeDraftDetailModal();
+        }
+    }, { once: true });
+}
+
+function closeDraftDetailModal() {
+    const modal = document.getElementById('draftDetailModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+function submitDraftFromDetail(draftId) {
+    closeDraftDetailModal();
+    submitDraftFromList(draftId);
+}
+
+function editDraft(draftId) {
+    currentDraftId = draftId;
+    registerAttachments = [];
+    navigateTo('draftEdit', { draftId: draftId });
+}
+
+function submitDraftFromList(draftId) {
+    const draft = dataStore.getDraft(draftId);
+    if (!draft) {
+        showToast('草稿不存在', 'error');
+        return;
+    }
+
+    let missingFields = [];
+    if (!draft.title || !draft.title.trim()) {
+        missingFields.push('公文标题');
+    }
+    if (!draft.fromUnit || !draft.fromUnit.trim()) {
+        missingFields.push('来文单位');
+    }
+
+    if (missingFields.length > 0) {
+        if (confirm(`提交前请先补充以下必填项：\n\n${missingFields.join('、')}\n\n是否现在去编辑？`)) {
+            editDraft(draftId);
+        }
+        return;
+    }
+
+    if (!confirm('确定要提交这篇草稿吗？\n\n提交后将：\n1. 生成正式的公文文号\n2. 自动进入待批示流程\n3. 从草稿箱中移除')) {
+        return;
+    }
+
+    const result = dataStore.submitDraft(draftId, currentUser);
+    if (result && result.success) {
+        showToast('提交成功，已生成正式公文：' + result.doc.id);
+        renderDraftList();
+        renderNav();
+        setTimeout(() => {
+            navigateTo('detail', { id: result.doc.id });
+        }, 500);
+    } else {
+        showToast(result && result.error ? result.error : '提交失败', 'error');
+    }
+}
+
+function deleteDraftConfirm(draftId) {
+    const draft = dataStore.getDraft(draftId);
+    if (!draft) {
+        showToast('草稿不存在', 'error');
+        return;
+    }
+
+    if (!confirm(`确定要删除草稿「${draft.title || '（无标题）'}」吗？\n\n删除后无法恢复。`)) {
+        return;
+    }
+
+    const success = dataStore.deleteDraft(draftId, currentUser);
+    if (success) {
+        showToast('草稿已删除');
+        renderDraftList();
+        renderNav();
+    } else {
+        showToast('删除失败', 'error');
+    }
 }
 
 function renderDocDetail() {
@@ -1788,11 +2817,15 @@ function renderDocDetail() {
                         <span class="detail-label">原文附件 <span style="color:#999; font-weight:normal;">（来自：${NODE_LABELS[FLOW_NODES.REGISTER]} · ${registerRecord.operatorName}）</span></span>
                         <div class="attachment-list">
                             ${registerRecord.attachments.map(a => `
-                                <div class="attachment-item">
-                                    <span class="attachment-icon">${getFileIcon(a.name)}</span>
-                                    <span class="attachment-name">${a.name}</span>
-                                    <span class="attachment-size">${a.size}</span>
-                                    <span class="file-type-badge file-type-${getFileType(a.name)}" style="margin-left:auto;">${getFileTypeLabel(a.name)}</span>
+                                <div class="attachment-item attachment-item-detail">
+                                    <div class="attachment-item-main">
+                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
+                                        <span class="attachment-name" title="${a.name}">${a.name}</span>
+                                        <span class="attachment-size">${a.size}</span>
+                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                        <span class="att-category-badge att-cat-${a.category || ATTACHMENT_CATEGORIES.OTHER}">${getAttachmentCategoryLabel(a.category)}</span>
+                                    </div>
+                                    ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
                                 </div>
                             `).join('')}
                         </div>
@@ -1923,11 +2956,15 @@ function renderTimeline(doc) {
                                     <span style="margin-left:8px; color:#aaa;">上传人：${record.operatorName}</span>
                                 </div>
                                 ${record.attachments.map(a => `
-                                    <div class="attachment-item timeline-attachment-item">
-                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
-                                        <span class="attachment-name">${a.name}</span>
-                                        <span class="attachment-size">${a.size}</span>
-                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                    <div class="attachment-item timeline-attachment-item timeline-attachment-item-extended">
+                                        <div class="attachment-item-main">
+                                            <span class="attachment-icon">${getFileIcon(a.name)}</span>
+                                            <span class="attachment-name" title="${a.name}">${a.name}</span>
+                                            <span class="attachment-size">${a.size}</span>
+                                            <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                            <span class="att-category-badge att-cat-${a.category || ATTACHMENT_CATEGORIES.OTHER}">${getAttachmentCategoryLabel(a.category)}</span>
+                                        </div>
+                                        ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
                                     </div>
                                 `).join('')}
                             </div>
@@ -2023,11 +3060,15 @@ function renderMultiHandleTimelineContent(doc, records) {
                                     <span style="margin-left:8px; color:#aaa;">上传人：${flowRecord.operatorName}</span>
                                 </div>
                                 ${flowRecord.attachments.map(a => `
-                                    <div class="attachment-item timeline-attachment-item">
-                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
-                                        <span class="attachment-name">${a.name}</span>
-                                        <span class="attachment-size">${a.size}</span>
-                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                    <div class="attachment-item timeline-attachment-item timeline-attachment-item-extended">
+                                        <div class="attachment-item-main">
+                                            <span class="attachment-icon">${getFileIcon(a.name)}</span>
+                                            <span class="attachment-name" title="${a.name}">${a.name}</span>
+                                            <span class="attachment-size">${a.size}</span>
+                                            <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                            <span class="att-category-badge att-cat-${a.category || ATTACHMENT_CATEGORIES.OTHER}">${getAttachmentCategoryLabel(a.category)}</span>
+                                        </div>
+                                        ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
                                     </div>
                                 `).join('')}
                             </div>
@@ -2048,7 +3089,6 @@ function renderMultiHandleTimelineContent(doc, records) {
     `;
 }
 
-let operateAttachments = [];
 let coHandlerList = [];
 
 function showOperateModal() {
@@ -2675,8 +3715,6 @@ function submitReturn() {
         showToast('操作失败，请重试', 'error');
     }
 }
-
-let resubmitAttachments = [];
 
 function showResubmitModal() {
     const doc = dataStore.getDoc(currentDocId);

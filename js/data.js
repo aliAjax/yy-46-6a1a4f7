@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'doc_flow_system';
+const DRAFT_STORAGE_KEY = 'doc_flow_drafts';
 
 const ROLES = {
     OFFICE: 'office',
@@ -399,6 +400,31 @@ const FILE_TYPE_EXTENSIONS = {
     [FILE_TYPES.ZIP]: ['zip', 'rar', '7z', 'tar', 'gz']
 };
 
+const ATTACHMENT_CATEGORIES = {
+    MAIN: 'main',
+    INSTRUCTION: 'instruction',
+    REFERENCE: 'reference',
+    OTHER: 'other'
+};
+
+const ATTACHMENT_CATEGORY_LABELS = {
+    [ATTACHMENT_CATEGORIES.MAIN]: '正文',
+    [ATTACHMENT_CATEGORIES.INSTRUCTION]: '批示件',
+    [ATTACHMENT_CATEGORIES.REFERENCE]: '参考材料',
+    [ATTACHMENT_CATEGORIES.OTHER]: '其他'
+};
+
+const ATTACHMENT_CATEGORY_COLORS = {
+    [ATTACHMENT_CATEGORIES.MAIN]: '#c41e3a',
+    [ATTACHMENT_CATEGORIES.INSTRUCTION]: '#fa8c16',
+    [ATTACHMENT_CATEGORIES.REFERENCE]: '#1890ff',
+    [ATTACHMENT_CATEGORIES.OTHER]: '#8c8c8c'
+};
+
+function getAttachmentCategoryLabel(category) {
+    return ATTACHMENT_CATEGORY_LABELS[category] || '未分类';
+}
+
 function getFileType(fileName) {
     if (!fileName) return FILE_TYPES.OTHER;
     const ext = fileName.split('.').pop().toLowerCase();
@@ -444,6 +470,9 @@ function extractDocAttachments(doc) {
                     fileType: getFileType(att.name),
                     fileTypeLabel: getFileTypeLabel(att.name),
                     fileIcon: getFileIcon(att.name),
+                    category: att.category || ATTACHMENT_CATEGORIES.OTHER,
+                    categoryLabel: getAttachmentCategoryLabel(att.category),
+                    remark: att.remark || '',
                     node: record.node,
                     nodeLabel: NODE_LABELS[record.node] || record.node,
                     uploaderId: record.operatorId,
@@ -615,6 +644,7 @@ function getCoHandleProgress(doc) {
 class DataStore {
     constructor() {
         this.docs = [];
+        this.drafts = [];
         this.currentUser = null;
         this.currentRole = null;
         this.load();
@@ -629,6 +659,16 @@ class DataStore {
                 this.migrateData();
             } catch (e) {
                 this.docs = [];
+            }
+        }
+
+        const draftData = localStorage.getItem(DRAFT_STORAGE_KEY);
+        if (draftData) {
+            try {
+                const parsed = JSON.parse(draftData);
+                this.drafts = parsed.drafts || [];
+            } catch (e) {
+                this.drafts = [];
             }
         }
     }
@@ -714,11 +754,95 @@ class DataStore {
                         record.id = `rec_${doc.id}_${idx}_${record.node}`;
                         changed = true;
                     }
+                    if (record.attachments && record.attachments.length > 0) {
+                        record.attachments.forEach(att => {
+                            if (att.category === undefined) {
+                                att.category = ATTACHMENT_CATEGORIES.OTHER;
+                                changed = true;
+                            }
+                            if (att.remark === undefined) {
+                                att.remark = '';
+                                changed = true;
+                            }
+                        });
+                    }
+                });
+            }
+
+            if (doc.handleRecords && doc.handleRecords.length > 0) {
+                doc.handleRecords.forEach(hr => {
+                    if (hr.attachments && hr.attachments.length > 0) {
+                        hr.attachments.forEach(att => {
+                            if (att.category === undefined) {
+                                att.category = ATTACHMENT_CATEGORIES.OTHER;
+                                changed = true;
+                            }
+                            if (att.remark === undefined) {
+                                att.remark = '';
+                                changed = true;
+                            }
+                        });
+                    }
                 });
             }
         });
         if (changed) {
             this.save();
+        }
+
+        this.migrateDrafts();
+    }
+
+    migrateDrafts() {
+        let changed = false;
+        this.drafts.forEach(draft => {
+            if (draft.attachments === undefined) {
+                draft.attachments = [];
+                changed = true;
+            }
+            if (draft.attachments && draft.attachments.length > 0) {
+                draft.attachments.forEach(att => {
+                    if (att.category === undefined) {
+                        att.category = ATTACHMENT_CATEGORIES.OTHER;
+                        changed = true;
+                    }
+                    if (att.remark === undefined) {
+                        att.remark = '';
+                        changed = true;
+                    }
+                });
+            }
+            if (draft.priority === undefined) {
+                draft.priority = 'normal';
+                changed = true;
+            }
+            if (draft.category === undefined) {
+                draft.category = '';
+                changed = true;
+            }
+            if (draft.content === undefined) {
+                draft.content = '';
+                changed = true;
+            }
+            if (draft.createdBy === undefined && draft.creatorId) {
+                draft.createdBy = draft.creatorId;
+                changed = true;
+            }
+            if (draft.createdByName === undefined && draft.creatorName) {
+                draft.createdByName = draft.creatorName;
+                changed = true;
+            }
+            if (draft.createdAt === undefined) {
+                draft.createdAt = draft.updatedAt || new Date().toISOString();
+                changed = true;
+            }
+            if (draft.status === undefined) {
+                draft.status = 'draft';
+                changed = true;
+            }
+        });
+        if (changed) {
+            this.saveDrafts();
         }
     }
 
@@ -726,6 +850,16 @@ class DataStore {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
             docs: this.docs
         }));
+    }
+
+    saveDrafts() {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
+            drafts: this.drafts
+        }));
+    }
+
+    generateDraftId() {
+        return 'draft_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
     }
 
     generateDocId() {
@@ -1593,6 +1727,10 @@ class DataStore {
             allAttachments = allAttachments.filter(a => a.fileType === filters.fileType);
         }
 
+        if (filters.category) {
+            allAttachments = allAttachments.filter(a => a.category === filters.category);
+        }
+
         if (filters.startDate) {
             allAttachments = allAttachments.filter(a => {
                 if (!a.uploadTime) return false;
@@ -1621,6 +1759,7 @@ class DataStore {
         const stats = {
             total: allAttachments.length,
             byType: {},
+            byCategory: {},
             byNode: {},
             byDept: {},
             last7Days: 0,
@@ -1629,6 +1768,10 @@ class DataStore {
 
         Object.values(FILE_TYPES).forEach(type => {
             stats.byType[type] = 0;
+        });
+
+        Object.values(ATTACHMENT_CATEGORIES).forEach(cat => {
+            stats.byCategory[cat] = 0;
         });
 
         Object.values(FLOW_NODES).forEach(node => {
@@ -1645,6 +1788,7 @@ class DataStore {
 
         allAttachments.forEach(att => {
             stats.byType[att.fileType] = (stats.byType[att.fileType] || 0) + 1;
+            stats.byCategory[att.category] = (stats.byCategory[att.category] || 0) + 1;
             stats.byNode[att.node] = (stats.byNode[att.node] || 0) + 1;
             if (att.uploaderDept) {
                 stats.byDept[att.uploaderDept] = (stats.byDept[att.uploaderDept] || 0) + 1;
@@ -1883,6 +2027,201 @@ class DataStore {
             default:
                 return false;
         }
+    }
+
+    createDraft(draftData, creator) {
+        const now = new Date().toISOString();
+        const draftId = this.generateDraftId();
+        const draft = {
+            id: draftId,
+            title: draftData.title || '',
+            fromUnit: draftData.fromUnit || '',
+            docNumber: draftData.docNumber || '',
+            docDate: draftData.docDate || '',
+            priority: draftData.priority || 'normal',
+            category: draftData.category || '',
+            content: draftData.content || '',
+            attachments: draftData.attachments || [],
+            createdBy: creator.id,
+            createdByName: creator.name,
+            createdAt: now,
+            updatedAt: now
+        };
+        this.drafts.unshift(draft);
+        this.saveDrafts();
+        return draft;
+    }
+
+    updateDraft(draftId, draftData, operator) {
+        const draft = this.getDraft(draftId);
+        if (!draft) return null;
+        if (draft.createdBy !== operator.id) return null;
+
+        const now = new Date().toISOString();
+        if (draftData.title !== undefined) draft.title = draftData.title;
+        if (draftData.fromUnit !== undefined) draft.fromUnit = draftData.fromUnit;
+        if (draftData.docNumber !== undefined) draft.docNumber = draftData.docNumber;
+        if (draftData.docDate !== undefined) draft.docDate = draftData.docDate;
+        if (draftData.priority !== undefined) draft.priority = draftData.priority;
+        if (draftData.category !== undefined) draft.category = draftData.category;
+        if (draftData.content !== undefined) draft.content = draftData.content;
+        if (draftData.attachments !== undefined) draft.attachments = draftData.attachments;
+        draft.updatedAt = now;
+
+        this.saveDrafts();
+        return draft;
+    }
+
+    getDraft(draftId) {
+        return this.drafts.find(d => d.id === draftId) || null;
+    }
+
+    listDrafts(filters = {}) {
+        let result = [...this.drafts];
+
+        if (filters.userId) {
+            result = result.filter(d => d.createdBy === filters.userId);
+        }
+
+        if (filters.keyword) {
+            const kw = filters.keyword.toLowerCase();
+            result = result.filter(d =>
+                d.title.toLowerCase().includes(kw) ||
+                d.fromUnit.toLowerCase().includes(kw) ||
+                (d.docNumber && d.docNumber.toLowerCase().includes(kw))
+            );
+        }
+
+        if (filters.priority) {
+            result = result.filter(d => d.priority === filters.priority);
+        }
+
+        if (filters.category) {
+            result = result.filter(d => d.category === filters.category);
+        }
+
+        if (filters.dateFrom) {
+            result = result.filter(d => new Date(d.updatedAt) >= new Date(filters.dateFrom));
+        }
+
+        if (filters.dateTo) {
+            const dateTo = new Date(filters.dateTo);
+            dateTo.setHours(23, 59, 59, 999);
+            result = result.filter(d => new Date(d.updatedAt) <= dateTo);
+        }
+
+        if (filters.hasAttachments !== undefined) {
+            if (filters.hasAttachments) {
+                result = result.filter(d => d.attachments && d.attachments.length > 0);
+            } else {
+                result = result.filter(d => !d.attachments || d.attachments.length === 0);
+            }
+        }
+
+        const sortField = filters.sortField || 'updatedAt';
+        const sortOrder = filters.sortOrder || 'desc';
+        result.sort((a, b) => {
+            let valA, valB;
+            switch (sortField) {
+                case 'title':
+                    valA = a.title || '';
+                    valB = b.title || '';
+                    break;
+                case 'fromUnit':
+                    valA = a.fromUnit || '';
+                    valB = b.fromUnit || '';
+                    break;
+                case 'createdAt':
+                    valA = new Date(a.createdAt).getTime();
+                    valB = new Date(b.createdAt).getTime();
+                    break;
+                case 'updatedAt':
+                default:
+                    valA = new Date(a.updatedAt).getTime();
+                    valB = new Date(b.updatedAt).getTime();
+                    break;
+            }
+            if (typeof valA === 'string') {
+                return sortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            }
+            return sortOrder === 'asc' ? valA - valB : valB - valA;
+        });
+
+        if (filters.page && filters.pageSize) {
+            const start = (filters.page - 1) * filters.pageSize;
+            const end = start + filters.pageSize;
+            const total = result.length;
+            result = result.slice(start, end);
+            return { items: result, total: total, page: filters.page, pageSize: filters.pageSize };
+        }
+
+        return result;
+    }
+
+    deleteDraft(draftId, operator) {
+        const draft = this.getDraft(draftId);
+        if (!draft) return false;
+        if (draft.createdBy !== operator.id) return false;
+
+        const index = this.drafts.findIndex(d => d.id === draftId);
+        if (index > -1) {
+            this.drafts.splice(index, 1);
+            this.saveDrafts();
+            return true;
+        }
+        return false;
+    }
+
+    submitDraft(draftId, operator) {
+        const draft = this.getDraft(draftId);
+        if (!draft) return { success: false, error: '草稿不存在' };
+        if (draft.createdBy !== operator.id) return { success: false, error: '无权操作此草稿' };
+
+        if (!draft.title || !draft.title.trim()) {
+            return { success: false, error: '公文标题不能为空，请补充后再提交' };
+        }
+        if (!draft.fromUnit || !draft.fromUnit.trim()) {
+            return { success: false, error: '来文单位不能为空，请补充后再提交' };
+        }
+
+        const docData = {
+            title: draft.title.trim(),
+            fromUnit: draft.fromUnit.trim(),
+            docNumber: draft.docNumber ? draft.docNumber.trim() : '',
+            docDate: draft.docDate || '',
+            priority: draft.priority || 'normal',
+            category: draft.category || '',
+            content: draft.content || '',
+            attachments: draft.attachments || []
+        };
+
+        const doc = this.createDoc(docData, operator);
+
+        if (doc && doc.flowRecords && doc.flowRecords.length > 0) {
+            const registerRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.REGISTER);
+            if (registerRecord) {
+                registerRecord.comment = '收文登记完成（由草稿提交）';
+                registerRecord.fromDraft = true;
+                registerRecord.draftId = draftId;
+                registerRecord.draftCreatedAt = draft.createdAt;
+                this.save();
+            }
+        }
+
+        const index = this.drafts.findIndex(d => d.id === draftId);
+        if (index > -1) {
+            this.drafts.splice(index, 1);
+            this.saveDrafts();
+        }
+
+        return { success: true, doc: doc, fromDraft: true };
+    }
+
+    getDraftStats(userId) {
+        const userDrafts = this.drafts.filter(d => d.createdBy === userId);
+        return {
+            total: userDrafts.length
+        };
     }
 
     initMockData() {
@@ -2872,3 +3211,113 @@ class ImportBatchStore {
 }
 
 const importBatchStore = new ImportBatchStore();
+
+const FILTER_VIEW_STORAGE_KEY = 'doc_flow_filter_views';
+
+const SUPPORTED_FILTER_FIELDS = ['keyword', 'status', 'assignedDept', 'priority'];
+
+class FilterViewStore {
+    constructor() {
+        this.views = [];
+        this.load();
+    }
+
+    load() {
+        const data = localStorage.getItem(FILTER_VIEW_STORAGE_KEY);
+        if (data) {
+            try {
+                const parsed = JSON.parse(data);
+                this.views = Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                this.views = [];
+            }
+        }
+    }
+
+    save() {
+        localStorage.setItem(FILTER_VIEW_STORAGE_KEY, JSON.stringify(this.views));
+    }
+
+    generateId() {
+        return 'view_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+    }
+
+    getViews() {
+        return [...this.views];
+    }
+
+    getViewById(id) {
+        return this.views.find(v => v.id === id) || null;
+    }
+
+    createView(name, filters) {
+        if (!name || !name.trim()) {
+            return { success: false, error: '视图名称不能为空' };
+        }
+        name = name.trim();
+        if (this.views.some(v => v.name === name)) {
+            return { success: false, error: '视图名称已存在' };
+        }
+
+        const filteredFilters = {};
+        SUPPORTED_FILTER_FIELDS.forEach(field => {
+            if (filters[field] !== undefined && filters[field] !== '' && filters[field] !== null) {
+                filteredFilters[field] = filters[field];
+            }
+        });
+
+        const view = {
+            id: this.generateId(),
+            name: name,
+            filters: filteredFilters,
+            createdAt: new Date().toISOString()
+        };
+
+        this.views.push(view);
+        this.save();
+        return { success: true, view };
+    }
+
+    deleteView(id) {
+        const idx = this.views.findIndex(v => v.id === id);
+        if (idx === -1) {
+            return { success: false, error: '视图不存在' };
+        }
+        this.views.splice(idx, 1);
+        this.save();
+        return { success: true };
+    }
+
+    updateView(id, name, filters) {
+        const view = this.getViewById(id);
+        if (!view) {
+            return { success: false, error: '视图不存在' };
+        }
+
+        if (name !== undefined) {
+            name = name.trim();
+            if (!name) {
+                return { success: false, error: '视图名称不能为空' };
+            }
+            if (this.views.some(v => v.name === name && v.id !== id)) {
+                return { success: false, error: '视图名称已存在' };
+            }
+            view.name = name;
+        }
+
+        if (filters !== undefined) {
+            const filteredFilters = {};
+            SUPPORTED_FILTER_FIELDS.forEach(field => {
+                if (filters[field] !== undefined && filters[field] !== '' && filters[field] !== null) {
+                    filteredFilters[field] = filters[field];
+                }
+            });
+            view.filters = filteredFilters;
+        }
+
+        this.save();
+        return { success: true, view };
+    }
+}
+
+const filterViewStore = new FilterViewStore();
