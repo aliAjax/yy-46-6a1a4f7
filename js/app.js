@@ -12,8 +12,10 @@ let currentImportFilters = {};
 
 let currentAttachmentFilters = {};
 
+let loginSelectedRole = ROLES.OFFICE;
+
 function init() {
-    updateUserSelect(ROLES.OFFICE);
+    selectLoginRole(ROLES.OFFICE);
     const savedRole = sessionStorage.getItem('doc_flow_role');
     const savedUserId = sessionStorage.getItem('doc_flow_userid');
     if (savedRole && savedUserId) {
@@ -26,6 +28,18 @@ function init() {
     }
 }
 
+function selectLoginRole(role) {
+    loginSelectedRole = role;
+    document.querySelectorAll('.role-selectable').forEach(card => {
+        if (card.dataset.role === role) {
+            card.classList.add('role-selected');
+        } else {
+            card.classList.remove('role-selected');
+        }
+    });
+    updateUserSelect(role);
+}
+
 function updateUserSelect(role) {
     const select = document.getElementById('userSelect');
     const users = userStore.getUsersByRole(role) || [];
@@ -34,9 +48,9 @@ function updateUserSelect(role) {
     ).join('');
 }
 
-function login(role) {
+function doLogin() {
+    const role = loginSelectedRole;
     currentRole = role;
-    updateUserSelect(role);
     const select = document.getElementById('userSelect');
     const userId = select.value;
     const users = userStore.getUsersByRole(role) || [];
@@ -55,11 +69,14 @@ function login(role) {
 }
 
 function logout() {
+    const lastRole = currentRole || ROLES.OFFICE;
     currentRole = null;
     currentUser = null;
     currentPage = 'dashboard';
     sessionStorage.removeItem('doc_flow_role');
     sessionStorage.removeItem('doc_flow_userid');
+
+    selectLoginRole(lastRole);
 
     document.getElementById('header').classList.add('hidden');
     document.getElementById('contentArea').classList.add('hidden');

@@ -32,17 +32,17 @@
                         <p class="login-subtitle">请选择身份登录</p>
                     </div>
                     <div class="login-roles">
-                        <div class="role-card" onclick="login('office')">
+                        <div class="role-card role-selectable" data-role="office" onclick="selectLoginRole('office')">
                             <div class="role-icon">🏢</div>
                             <div class="role-name">办公室人员</div>
                             <div class="role-desc">负责收文登记、归档办结</div>
                         </div>
-                        <div class="role-card" onclick="login('leader')">
+                        <div class="role-card role-selectable" data-role="leader" onclick="selectLoginRole('leader')">
                             <div class="role-icon">👔</div>
                             <div class="role-name">领导</div>
                             <div class="role-desc">负责批示意见、分派承办</div>
                         </div>
-                        <div class="role-card" onclick="login('staff')">
+                        <div class="role-card role-selectable" data-role="staff" onclick="selectLoginRole('staff')">
                             <div class="role-icon">👨‍💼</div>
                             <div class="role-name">科室承办人</div>
                             <div class="role-desc">负责办理、反馈办理结果</div>
@@ -51,6 +51,9 @@
                     <div class="login-user-select">
                         <label>选择具体用户：</label>
                         <select id="userSelect" class="form-input"></select>
+                    </div>
+                    <div class="login-actions">
+                        <button class="btn btn-primary btn-block" onclick="doLogin()">登 录</button>
                     </div>
                 </div>
             </div>
