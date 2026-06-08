@@ -67,6 +67,263 @@ const USERS = {
 
 const DEPARTMENTS = ['综合科', '业务科', '法规科', '办公室'];
 
+const USER_STORAGE_KEY = 'doc_flow_users';
+
+class UserStore {
+    constructor() {
+        this.departments = [];
+        this.users = [];
+        this.load();
+    }
+
+    load() {
+        const data = localStorage.getItem(USER_STORAGE_KEY);
+        if (data) {
+            try {
+                const parsed = JSON.parse(data);
+                this.departments = parsed.departments || [];
+                this.users = parsed.users || [];
+                this.migrateData();
+            } catch (e) {
+                this.departments = [];
+                this.users = [];
+            }
+        }
+        if (this.departments.length === 0 && this.users.length === 0) {
+            this.migrateFromDefaults();
+        }
+    }
+
+    migrateData() {
+        let changed = false;
+        this.users.forEach(user => {
+            if (user.role === undefined) {
+                user.role = this.inferRole(user);
+                changed = true;
+            }
+            if (user.active === undefined) {
+                user.active = true;
+                changed = true;
+            }
+        });
+        if (changed) {
+            this.save();
+        }
+    }
+
+    inferRole(user) {
+        if (!user.dept) return ROLES.STAFF;
+        if (user.dept === '办公室') return ROLES.OFFICE;
+        if (user.dept === '局领导') return ROLES.LEADER;
+        return ROLES.STAFF;
+    }
+
+    migrateFromDefaults() {
+        const allDepts = new Set(DEPARTMENTS);
+        Object.entries(USERS).forEach(([role, users]) => {
+            users.forEach(user => {
+                if (user.dept) allDepts.add(user.dept);
+            });
+        });
+        this.departments = [...allDepts];
+        this.users = [];
+        Object.entries(USERS).forEach(([role, users]) => {
+            users.forEach(user => {
+                this.users.push({
+                    id: user.id,
+                    name: user.name,
+                    dept: user.dept,
+                    role: role,
+                    active: true
+                });
+            });
+        });
+        this.save();
+    }
+
+    save() {
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify({
+            departments: this.departments,
+            users: this.users
+        }));
+    }
+
+    getDepartments() {
+        return [...this.departments];
+    }
+
+    getStaffDepartments() {
+        return this.departments.filter(d => d !== '局领导' && d !== '办公室');
+    }
+
+    addDepartment(name) {
+        if (!name || !name.trim()) {
+            return { success: false, error: '科室名称不能为空' };
+        }
+        name = name.trim();
+        if (this.departments.includes(name)) {
+            return { success: false, error: '科室名称已存在' };
+        }
+        this.departments.push(name);
+        this.save();
+        return { success: true };
+    }
+
+    updateDepartment(oldName, newName) {
+        if (!newName || !newName.trim()) {
+            return { success: false, error: '科室名称不能为空' };
+        }
+        newName = newName.trim();
+        if (oldName === newName) return { success: true };
+        if (this.departments.includes(newName)) {
+            return { success: false, error: '科室名称已存在' };
+        }
+        const idx = this.departments.indexOf(oldName);
+        if (idx === -1) {
+            return { success: false, error: '科室不存在' };
+        }
+        this.departments[idx] = newName;
+        this.users.forEach(user => {
+            if (user.dept === oldName) {
+                user.dept = newName;
+            }
+        });
+        this.save();
+        return { success: true };
+    }
+
+    deleteDepartment(name) {
+        const idx = this.departments.indexOf(name);
+        if (idx === -1) {
+            return { success: false, error: '科室不存在' };
+        }
+        const deptUsers = this.users.filter(u => u.dept === name && u.active);
+        if (deptUsers.length > 0) {
+            return { success: false, error: '该科室下还有在职人员，无法删除' };
+        }
+        this.departments.splice(idx, 1);
+        this.save();
+        return { success: true };
+    }
+
+    getUsersByRole(role) {
+        return this.users.filter(u => u.role === role && u.active);
+    }
+
+    getUsersByDept(dept) {
+        return this.users.filter(u => u.dept === dept && u.active);
+    }
+
+    getAllUsers() {
+        return this.users.filter(u => u.active);
+    }
+
+    getAllUsersWithInactive() {
+        return [...this.users];
+    }
+
+    getUserById(id) {
+        return this.users.find(u => u.id === id) || null;
+    }
+
+    getUserDisplay(userId, fallbackName = '') {
+        const user = this.getUserById(userId);
+        if (user) {
+            return user.name;
+        }
+        return fallbackName || userId || '-';
+    }
+
+    generateUserId(role) {
+        const prefix = role || 'user';
+        const existing = this.users.filter(u => u.id.startsWith(prefix));
+        const maxNum = existing.reduce((max, u) => {
+            const num = parseInt(u.id.replace(prefix, ''), 10);
+            return isNaN(num) ? max : Math.max(max, num);
+        }, 0);
+        return `${prefix}${maxNum + 1}`;
+    }
+
+    addUser(userData) {
+        const { name, dept, role } = userData;
+        if (!name || !name.trim()) {
+            return { success: false, error: '姓名不能为空' };
+        }
+        if (!dept) {
+            return { success: false, error: '请选择科室' };
+        }
+        if (!role) {
+            return { success: false, error: '请选择角色' };
+        }
+        if (!this.departments.includes(dept)) {
+            return { success: false, error: '科室不存在' };
+        }
+        const id = this.generateUserId(role);
+        const user = {
+            id: id,
+            name: name.trim(),
+            dept: dept,
+            role: role,
+            active: true
+        };
+        this.users.push(user);
+        this.save();
+        return { success: true, user };
+    }
+
+    updateUser(userId, userData) {
+        const user = this.getUserById(userId);
+        if (!user) {
+            return { success: false, error: '用户不存在' };
+        }
+        if (userData.name !== undefined) {
+            if (!userData.name.trim()) {
+                return { success: false, error: '姓名不能为空' };
+            }
+            user.name = userData.name.trim();
+        }
+        if (userData.dept !== undefined) {
+            if (!this.departments.includes(userData.dept)) {
+                return { success: false, error: '科室不存在' };
+            }
+            user.dept = userData.dept;
+        }
+        if (userData.role !== undefined) {
+            user.role = userData.role;
+        }
+        this.save();
+        return { success: true, user };
+    }
+
+    deleteUser(userId) {
+        const user = this.getUserById(userId);
+        if (!user) {
+            return { success: false, error: '用户不存在' };
+        }
+        user.active = false;
+        this.save();
+        return { success: true };
+    }
+
+    restoreUser(userId) {
+        const user = this.getUserById(userId);
+        if (!user) {
+            return { success: false, error: '用户不存在' };
+        }
+        user.active = true;
+        this.save();
+        return { success: true };
+    }
+
+    initMockData() {
+        if (this.users.length > 0 || this.departments.length > 0) return;
+        this.migrateFromDefaults();
+    }
+}
+
+const userStore = new UserStore();
+userStore.initMockData();
+
 const DOC_CATEGORIES = ['通知', '请示', '报告', '批复', '函', '会议纪要', '意见', '其他'];
 
 const PRIORITY_DAYS = {
@@ -1222,7 +1479,7 @@ class DataStore {
             stats.statusDistribution[node] = 0;
         });
 
-        DEPARTMENTS.forEach(dept => {
+        userStore.getDepartments().forEach(dept => {
             stats.deptDistribution[dept] = 0;
         });
 
@@ -1378,7 +1635,7 @@ class DataStore {
             stats.byNode[node] = 0;
         });
 
-        DEPARTMENTS.forEach(dept => {
+        userStore.getDepartments().forEach(dept => {
             stats.byDept[dept] = 0;
         });
 
