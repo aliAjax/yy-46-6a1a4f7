@@ -951,11 +951,19 @@ class DataStore {
     listDocs(filters = {}) {
         let result = [...this.docs];
 
+        if (filters.title) {
+            const kw = filters.title.toLowerCase();
+            result = result.filter(d => d.title.toLowerCase().includes(kw));
+        }
+
+        if (filters.docNumber) {
+            const kw = filters.docNumber.toLowerCase();
+            result = result.filter(d => d.id.toLowerCase().includes(kw));
+        }
+
         if (filters.keyword) {
             const kw = filters.keyword.toLowerCase();
             result = result.filter(d =>
-                d.title.toLowerCase().includes(kw) ||
-                d.id.toLowerCase().includes(kw) ||
                 d.fromUnit.toLowerCase().includes(kw)
             );
         }

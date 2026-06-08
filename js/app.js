@@ -3,6 +3,7 @@ let currentUser = null;
 let currentPage = 'dashboard';
 let currentDocId = null;
 let currentFilters = {};
+let activeDocFilterViewId = null;
 let currentArchiveFilters = {};
 let currentSupervisionFilters = {};
 let isArchiveDetail = false;
@@ -489,6 +490,8 @@ function renderDocList() {
         { value: '__none__', label: '未分类' }
     ];
 
+    const title = currentFilters.title || '';
+    const docNumber = currentFilters.docNumber || '';
     const kw = currentFilters.keyword || '';
     const status = currentFilters.status || '';
     const mode = currentFilters.isMultiDept === true ? 'multi' : (currentFilters.isMultiDept === false ? 'single' : '');
@@ -497,6 +500,8 @@ function renderDocList() {
     const category = currentFilters.category || '';
     const startDate = currentFilters.startDate || '';
     const endDate = currentFilters.endDate || '';
+    const views = getDocFilterViews();
+    const activeView = views.find(view => view.id === activeDocFilterViewId);
 
     content.innerHTML = `
         <div class="page-header">
@@ -506,11 +511,37 @@ function renderDocList() {
 
         <div class="card">
             <div class="card-body">
+                <div class="filter-view-bar">
+                    <div class="filter-view-main">
+                        <span class="filter-view-label">常用筛选视图</span>
+                        <select class="form-select filter-view-select" id="docFilterViewSelect" onchange="applyDocFilterView(this.value)">
+                            <option value="">选择个人视图</option>
+                            ${views.map(view => `<option value="${view.id}" ${view.id === activeDocFilterViewId ? 'selected' : ''}>${escapeHtml(view.name)}</option>`).join('')}
+                        </select>
+                        ${activeView ? `<span class="filter-view-active">当前：${escapeHtml(activeView.name)}</span>` : ''}
+                    </div>
+                    <div class="filter-view-actions">
+                        <button class="btn btn-default btn-sm" onclick="openSaveDocFilterViewModal()">保存当前筛选</button>
+                        ${activeView ? `<button class="btn btn-default btn-sm" onclick="deleteDocFilterView('${activeView.id}')">删除当前视图</button>` : ''}
+                    </div>
+                </div>
                 <div class="search-bar list-search-bar">
                     <div class="form-group">
-                        <label class="form-label">关键词</label>
-                        <input type="text" class="form-input" id="searchKeyword" placeholder="文号、标题、来文单位"
-                               value="${kw}"
+                        <label class="form-label">标题</label>
+                        <input type="text" class="form-input" id="searchTitle" placeholder="请输入公文标题"
+                               value="${escapeHtml(title)}"
+                               onkeyup="if(event.key==='Enter') applyFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">文号</label>
+                        <input type="text" class="form-input" id="searchDocNumber" placeholder="请输入文号"
+                               value="${escapeHtml(docNumber)}"
+                               onkeyup="if(event.key==='Enter') applyFilters()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">来文单位</label>
+                        <input type="text" class="form-input" id="searchKeyword" placeholder="请输入来文单位"
+                               value="${escapeHtml(kw)}"
                                onkeyup="if(event.key==='Enter') applyFilters()">
                     </div>
                     <div class="form-group">
@@ -577,6 +608,8 @@ function applyFilters() {
     }
 
     currentFilters = {
+        title: document.getElementById('searchTitle').value.trim(),
+        docNumber: document.getElementById('searchDocNumber').value.trim(),
         keyword: document.getElementById('searchKeyword').value.trim(),
         status: document.getElementById('searchStatus').value,
         assignedDept: document.getElementById('searchDept').value,
@@ -586,11 +619,16 @@ function applyFilters() {
         endDate: document.getElementById('searchEndDate').value,
         isMultiDept: isMultiDept
     };
+    activeDocFilterViewId = null;
     document.getElementById('docListTable').innerHTML = renderDocTable();
+    syncDocFilterViewSelect();
 }
 
 function resetFilters() {
     currentFilters = {};
+    activeDocFilterViewId = null;
+    document.getElementById('searchTitle').value = '';
+    document.getElementById('searchDocNumber').value = '';
     document.getElementById('searchKeyword').value = '';
     document.getElementById('searchStatus').value = '';
     document.getElementById('searchDept').value = '';
@@ -600,6 +638,193 @@ function resetFilters() {
     document.getElementById('searchStartDate').value = '';
     document.getElementById('searchEndDate').value = '';
     document.getElementById('docListTable').innerHTML = renderDocTable();
+    syncDocFilterViewSelect();
+}
+
+function getDocFilterStorageKey() {
+    const userId = currentUser ? currentUser.id : 'anonymous';
+    return `doc_flow_filter_views_${userId}`;
+}
+
+function getDocFilterViews() {
+    try {
+        const data = localStorage.getItem(getDocFilterStorageKey());
+        const parsed = data ? JSON.parse(data) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveDocFilterViews(views) {
+    localStorage.setItem(getDocFilterStorageKey(), JSON.stringify(views));
+}
+
+function getCurrentDocFilterViewFilters() {
+    return {
+        title: (document.getElementById('searchTitle')?.value || '').trim(),
+        docNumber: (document.getElementById('searchDocNumber')?.value || '').trim(),
+        status: document.getElementById('searchStatus')?.value || '',
+        priority: document.getElementById('searchPriority')?.value || '',
+        assignedDept: document.getElementById('searchDept')?.value || ''
+    };
+}
+
+function normalizeDocFilterViewFilters(filters = {}) {
+    return {
+        title: filters.title || '',
+        docNumber: filters.docNumber || '',
+        status: filters.status || '',
+        priority: filters.priority || '',
+        assignedDept: filters.assignedDept || ''
+    };
+}
+
+function openSaveDocFilterViewModal() {
+    const filters = getCurrentDocFilterViewFilters();
+    const hasFilter = Object.values(filters).some(value => value !== '');
+
+    document.getElementById('modalTitle').textContent = '保存常用筛选视图';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>视图名称</label>
+            <input type="text" class="form-input" id="docFilterViewName" placeholder="例如：待承办加急件">
+        </div>
+        <div class="filter-view-summary">
+            <div class="filter-view-summary-title">将保存以下筛选条件</div>
+            ${renderDocFilterViewSummary(filters)}
+        </div>
+        ${hasFilter ? '' : '<div class="form-tip">当前未选择筛选条件，可保存为“全部公文”视图。</div>'}
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="saveCurrentDocFilterView()">保存视图</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('docFilterViewName')?.focus(), 0);
+}
+
+function renderDocFilterViewSummary(filters) {
+    const labels = [
+        ['title', '标题'],
+        ['docNumber', '文号'],
+        ['status', '状态'],
+        ['priority', '紧急程度'],
+        ['assignedDept', '承办科室']
+    ];
+    const valueLabels = {
+        status: value => value ? getStatusLabelByNode(value) : '全部状态',
+        priority: value => value ? ({ normal: '普通', high: '加急', urgent: '特急' }[value] || value) : '全部紧急程度',
+        assignedDept: value => value || '全部科室'
+    };
+
+    return `<div class="filter-view-summary-list">
+        ${labels.map(([key, label]) => {
+            const value = valueLabels[key] ? valueLabels[key](filters[key]) : (filters[key] || '不限');
+            return `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`;
+        }).join('')}
+    </div>`;
+}
+
+function saveCurrentDocFilterView() {
+    const input = document.getElementById('docFilterViewName');
+    const name = input.value.trim();
+    if (!name) {
+        showToast('请输入视图名称', 'error');
+        input.focus();
+        return;
+    }
+
+    const views = getDocFilterViews();
+    if (views.some(view => view.name === name && view.id !== activeDocFilterViewId)) {
+        showToast('视图名称已存在', 'error');
+        input.focus();
+        return;
+    }
+
+    const filters = getCurrentDocFilterViewFilters();
+    const now = new Date().toISOString();
+    let savedView;
+    if (activeDocFilterViewId) {
+        savedView = views.find(view => view.id === activeDocFilterViewId);
+    }
+    if (savedView) {
+        savedView.name = name;
+        savedView.filters = filters;
+        savedView.updatedAt = now;
+    } else {
+        savedView = {
+            id: `view_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            name,
+            filters,
+            createdAt: now,
+            updatedAt: now
+        };
+        views.unshift(savedView);
+    }
+
+    saveDocFilterViews(views);
+    activeDocFilterViewId = savedView.id;
+    currentFilters = {
+        ...normalizeDocFilterViewFilters(savedView.filters)
+    };
+    closeModal();
+    showToast('常用筛选视图已保存');
+    renderDocList();
+}
+
+function applyDocFilterView(viewId) {
+    if (!viewId) {
+        activeDocFilterViewId = null;
+        syncDocFilterViewSelect();
+        return;
+    }
+
+    const view = getDocFilterViews().find(item => item.id === viewId);
+    if (!view) {
+        showToast('视图不存在或已删除', 'error');
+        activeDocFilterViewId = null;
+        renderDocList();
+        return;
+    }
+
+    activeDocFilterViewId = view.id;
+    currentFilters = {
+        keyword: '',
+        category: '',
+        startDate: '',
+        endDate: '',
+        isMultiDept: undefined,
+        title: '',
+        docNumber: '',
+        status: '',
+        priority: '',
+        assignedDept: '',
+        ...normalizeDocFilterViewFilters(view.filters)
+    };
+    renderDocList();
+    showToast(`已切换到“${view.name}”`);
+}
+
+function deleteDocFilterView(viewId) {
+    const views = getDocFilterViews();
+    const view = views.find(item => item.id === viewId);
+    if (!view) return;
+    if (!confirm(`确定删除“${view.name}”视图吗？`)) return;
+
+    saveDocFilterViews(views.filter(item => item.id !== viewId));
+    if (activeDocFilterViewId === viewId) {
+        activeDocFilterViewId = null;
+    }
+    showToast('常用筛选视图已删除');
+    renderDocList();
+}
+
+function syncDocFilterViewSelect() {
+    const select = document.getElementById('docFilterViewSelect');
+    if (select) {
+        select.value = activeDocFilterViewId || '';
+    }
 }
 
 function renderDocTable() {
