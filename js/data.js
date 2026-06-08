@@ -371,6 +371,18 @@ const HANDLE_STATUS_LABELS = {
     [HANDLE_STATUS.COMPLETED]: '已完成'
 };
 
+const TRANSFER_TYPES = {
+    DOC: 'doc',
+    DRAFT: 'draft',
+    MESSAGE: 'message'
+};
+
+const TRANSFER_TYPE_LABELS = {
+    [TRANSFER_TYPES.DOC]: '未完成公文',
+    [TRANSFER_TYPES.DRAFT]: '草稿',
+    [TRANSFER_TYPES.MESSAGE]: '未读消息'
+};
+
 const FILE_TYPES = {
     DOC: 'doc',
     XLS: 'xls',
@@ -705,6 +717,11 @@ class DataStore {
                 changed = true;
             }
 
+            if (doc.transferRecords === undefined) {
+                doc.transferRecords = [];
+                changed = true;
+            }
+
             if (doc.isMultiDept === undefined) {
                 doc.isMultiDept = false;
                 changed = true;
@@ -838,6 +855,10 @@ class DataStore {
             }
             if (draft.status === undefined) {
                 draft.status = 'draft';
+                changed = true;
+            }
+            if (draft.transferRecords === undefined) {
+                draft.transferRecords = [];
                 changed = true;
             }
         });
@@ -2029,6 +2050,183 @@ class DataStore {
         }
     }
 
+    getPendingDocsForUser(userId) {
+        return this.docs.filter(doc => {
+            if (!doc || (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)) {
+                return false;
+            }
+            if (doc.currentNode === FLOW_NODES.REGISTER && doc.isReturned && doc.createdBy === userId) {
+                return true;
+            }
+            if ((doc.currentNode === FLOW_NODES.PROPOSE || doc.currentNode === FLOW_NODES.ASSIGN) &&
+                doc.flowRecords &&
+                doc.flowRecords.some(r => r.operatorId === userId)) {
+                return true;
+            }
+            if (doc.currentNode === FLOW_NODES.HANDLE || doc.currentNode === FLOW_NODES.FEEDBACK) {
+                if (doc.currentNode === FLOW_NODES.FEEDBACK && doc.assignedUser === userId) {
+                    return true;
+                }
+                return !!(doc.handleRecords || []).find(r => r.userId === userId && r.status === HANDLE_STATUS.PENDING);
+            }
+            if (doc.currentNode === FLOW_NODES.COMPLETE && !doc.archived && doc.createdBy === userId) {
+                return true;
+            }
+            return false;
+        });
+    }
+
+    getTransferSummary(userId) {
+        const docs = this.getPendingDocsForUser(userId).map(doc => ({
+            id: doc.id,
+            title: doc.title,
+            node: doc.currentNode,
+            nodeLabel: getDocStatusLabel(doc),
+            assignedDept: doc.assignedDept || '',
+            assignedUserName: doc.assignedUserName || ''
+        }));
+        const drafts = this.drafts.filter(d => d.createdBy === userId).map(d => ({
+            id: d.id,
+            title: d.title || '（无标题）',
+            updatedAt: d.updatedAt
+        }));
+        const unreadMessages = messageStore.getUnreadMessagesForUserId(userId).map(m => ({
+            id: m.id,
+            title: m.title,
+            docTitle: m.docTitle || '',
+            createdAt: m.createdAt
+        }));
+
+        return {
+            docs,
+            drafts,
+            messages: unreadMessages,
+            total: docs.length + drafts.length + unreadMessages.length
+        };
+    }
+
+    getTransferReceivers(user) {
+        if (!user) return [];
+        return userStore.getAllUsers()
+            .filter(candidate => {
+                if (candidate.id === user.id) return false;
+                if (candidate.role === user.role) return true;
+                return candidate.dept === user.dept;
+            })
+            .map(candidate => ({
+                id: candidate.id,
+                name: candidate.name,
+                dept: candidate.dept,
+                role: candidate.role,
+                roleLabel: ROLE_LABELS[candidate.role] || candidate.role,
+                matchType: candidate.role === user.role ? '同角色' : '同科室'
+            }));
+    }
+
+    transferUserWork(userId, receiverId, operator) {
+        const fromUser = userStore.getUserById(userId);
+        const toUser = userStore.getUserById(receiverId);
+        if (!fromUser || !toUser) {
+            return { success: false, error: '移交人员不存在' };
+        }
+        if (!toUser.active) {
+            return { success: false, error: '接收人已停用' };
+        }
+        const validReceiver = this.getTransferReceivers(fromUser).some(u => u.id === receiverId);
+        if (!validReceiver) {
+            return { success: false, error: '接收人必须是同角色或同科室在职人员' };
+        }
+
+        const now = new Date().toISOString();
+        const operatorInfo = operator || toUser;
+        const recordBase = {
+            id: 'tr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            fromUserId: fromUser.id,
+            fromUserName: fromUser.name,
+            fromUserDept: fromUser.dept,
+            toUserId: toUser.id,
+            toUserName: toUser.name,
+            toUserDept: toUser.dept,
+            operatorId: operatorInfo.id,
+            operatorName: operatorInfo.name,
+            time: now
+        };
+
+        let docCount = 0;
+        this.getPendingDocsForUser(userId).forEach(doc => {
+            doc.transferRecords = doc.transferRecords || [];
+            const docRecord = {
+                ...recordBase,
+                id: recordBase.id + '_doc_' + doc.id,
+                type: TRANSFER_TYPES.DOC,
+                docId: doc.id,
+                docTitle: doc.title,
+                node: doc.currentNode,
+                nodeLabel: getDocStatusLabel(doc)
+            };
+
+            if (doc.createdBy === fromUser.id &&
+                ((doc.currentNode === FLOW_NODES.REGISTER && doc.isReturned) ||
+                 (doc.currentNode === FLOW_NODES.COMPLETE && !doc.archived))) {
+                doc.createdBy = toUser.id;
+                doc.createdByName = toUser.name;
+            }
+
+            if (doc.assignedUser === fromUser.id) {
+                doc.assignedUser = toUser.id;
+                doc.assignedUserName = toUser.name;
+                doc.assignedDept = toUser.dept;
+            }
+
+            (doc.handleRecords || []).forEach(hr => {
+                if (hr.userId === fromUser.id && hr.status === HANDLE_STATUS.PENDING) {
+                    hr.previousUserId = hr.previousUserId || fromUser.id;
+                    hr.previousUserName = hr.previousUserName || fromUser.name;
+                    hr.transferFromUserId = fromUser.id;
+                    hr.transferFromUserName = fromUser.name;
+                    hr.transferTime = now;
+                    hr.userId = toUser.id;
+                    hr.userName = toUser.name;
+                    hr.dept = toUser.dept;
+                }
+            });
+
+            doc.transferRecords.push(docRecord);
+            docCount++;
+        });
+
+        let draftCount = 0;
+        this.drafts.forEach(draft => {
+            if (draft.createdBy !== fromUser.id) return;
+            draft.transferRecords = draft.transferRecords || [];
+            draft.transferRecords.push({
+                ...recordBase,
+                id: recordBase.id + '_draft_' + draft.id,
+                type: TRANSFER_TYPES.DRAFT,
+                draftId: draft.id,
+                draftTitle: draft.title || '（无标题）'
+            });
+            draft.createdBy = toUser.id;
+            draft.createdByName = toUser.name;
+            draft.updatedAt = now;
+            draftCount++;
+        });
+
+        const messageCount = messageStore.transferUnreadMessages(fromUser.id, toUser, recordBase);
+
+        this.save();
+        this.saveDrafts();
+
+        return {
+            success: true,
+            counts: {
+                docs: docCount,
+                drafts: draftCount,
+                messages: messageCount
+            }
+        };
+    }
+
     createDraft(draftData, creator) {
         const now = new Date().toISOString();
         const draftId = this.generateDraftId();
@@ -2826,6 +3024,7 @@ class MessageStore {
             fromUserName: messageData.fromUserName,
             toUserId: messageData.toUserId || null,
             toRole: messageData.toRole || null,
+            transferRecords: messageData.transferRecords || [],
             read: false,
             createdAt: now
         };
@@ -2875,6 +3074,35 @@ class MessageStore {
 
     getMessage(id) {
         return this.messages.find(m => m.id === id);
+    }
+
+    getUnreadMessagesForUserId(userId) {
+        return this.messages.filter(msg => msg.toUserId === userId && !msg.read);
+    }
+
+    transferUnreadMessages(fromUserId, toUser, transferBase) {
+        let count = 0;
+        this.messages.forEach(msg => {
+            if (msg.toUserId !== fromUserId || msg.read) return;
+            msg.transferRecords = msg.transferRecords || [];
+            msg.transferRecords.push({
+                ...transferBase,
+                id: transferBase.id + '_msg_' + msg.id,
+                type: TRANSFER_TYPES.MESSAGE,
+                messageId: msg.id,
+                messageTitle: msg.title,
+                originalToUserId: fromUserId
+            });
+            msg.previousToUserId = msg.previousToUserId || fromUserId;
+            msg.previousToUserName = msg.previousToUserName || transferBase.fromUserName;
+            msg.toUserId = toUser.id;
+            msg.toRole = null;
+            count++;
+        });
+        if (count > 0) {
+            this.save();
+        }
+        return count;
     }
 
     initMockMessages() {

@@ -2804,7 +2804,12 @@ function renderDocDetail() {
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">承办人</span>
-                        <span class="detail-value">${doc.assignedUserName || '-'}</span>
+                        <span class="detail-value">
+                            ${doc.assignedUserName || '-'}
+                            ${getMainHandler(doc) && getMainHandler(doc).transferFromUserName ? `
+                                <span class="transfer-inline-note">原处理人：${escapeHtml(getMainHandler(doc).transferFromUserName)}</span>
+                            ` : ''}
+                        </span>
                     </div>
                     `}
                     ` : ''}
@@ -2854,6 +2859,42 @@ function renderDocDetail() {
             <div class="card-body">
                 ${renderTimeline(doc)}
             </div>
+        </div>
+
+        ${doc.transferRecords && doc.transferRecords.length > 0 ? `
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">移交记录</span>
+                <span class="badge-count">${doc.transferRecords.length} 条</span>
+            </div>
+            <div class="card-body">
+                ${renderDocTransferRecords(doc)}
+            </div>
+        </div>
+        ` : ''}
+    `;
+}
+
+function renderDocTransferRecords(doc) {
+    const records = (doc.transferRecords || []).slice().sort((a, b) => new Date(b.time) - new Date(a.time));
+    if (records.length === 0) return '';
+
+    return `
+        <div class="transfer-records">
+            ${records.map(record => `
+                <div class="transfer-record-item">
+                    <div class="transfer-record-main">
+                        <span class="transfer-record-type">${TRANSFER_TYPE_LABELS[record.type] || '移交'}</span>
+                        <strong>${escapeHtml(record.fromUserName)} → ${escapeHtml(record.toUserName)}</strong>
+                    </div>
+                    <div class="transfer-record-meta">
+                        ${escapeHtml(record.fromUserDept || '-')} 移交至 ${escapeHtml(record.toUserDept || '-')} · ${formatDateTime(record.time)}
+                    </div>
+                    <div class="transfer-record-meta">
+                        经办人：${escapeHtml(record.operatorName || '-')} · 当前节点：${escapeHtml(record.nodeLabel || getDocStatusLabel(doc))}
+                    </div>
+                </div>
+            `).join('')}
         </div>
     `;
 }
@@ -3049,6 +3090,11 @@ function renderMultiHandleTimelineContent(doc, records) {
                         ${isCompleted ? '已完成' : '待办理'}
                     </span>
                 </div>
+                ${hr.transferFromUserName ? `
+                    <div class="handle-transfer-note">
+                        原处理人：${escapeHtml(hr.transferFromUserName)}，${formatDateTime(hr.transferTime)}移交给${escapeHtml(hr.userName)}
+                    </div>
+                ` : ''}
                 ${isCompleted && flowRecord ? `
                     <div class="handle-record-body">
                         <div class="timeline-meta">${formatDateTime(flowRecord.time)}</div>
@@ -4931,6 +4977,8 @@ function renderBatchImportResult() {
 
 let userManageTab = 'departments';
 let userManageShowInactive = false;
+let pendingDeactivateUserId = null;
+let selectedTransferReceiverId = null;
 
 function renderUserManage() {
     const content = document.getElementById('contentArea');
@@ -5372,13 +5420,156 @@ function confirmDeleteUser(userId) {
     const user = userStore.getUserById(userId);
     if (!user) return;
 
-    if (!confirm(`确定要停用人员"${user.name}"吗？\n\n停用后：\n• 登录时将无法选择该用户\n• 分办时将无法选择该用户\n• 历史公文中已记录的姓名会保留`)) {
+    pendingDeactivateUserId = userId;
+    selectedTransferReceiverId = null;
+    showUserTransferModal(userId);
+}
+
+function showUserTransferModal(userId) {
+    const user = userStore.getUserById(userId);
+    if (!user) return;
+
+    const summary = dataStore.getTransferSummary(userId);
+    const receivers = dataStore.getTransferReceivers(user);
+
+    document.getElementById('modalTitle').textContent = '停用人员前移交';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="transfer-user-panel">
+            <div class="transfer-user-main">
+                <strong>${escapeHtml(user.name)}</strong>
+                <span>${escapeHtml(user.dept)} · ${ROLE_LABELS[user.role] || user.role}</span>
+            </div>
+            <div class="transfer-user-note">停用后该人员不能登录或被重新分办，历史办理记录中的姓名会保留。</div>
+        </div>
+
+        <div class="transfer-summary-grid">
+            <div class="transfer-summary-card">
+                <div class="transfer-summary-number">${summary.docs.length}</div>
+                <div class="transfer-summary-label">未完成公文</div>
+            </div>
+            <div class="transfer-summary-card">
+                <div class="transfer-summary-number">${summary.drafts.length}</div>
+                <div class="transfer-summary-label">草稿</div>
+            </div>
+            <div class="transfer-summary-card">
+                <div class="transfer-summary-number">${summary.messages.length}</div>
+                <div class="transfer-summary-label">未读消息</div>
+            </div>
+        </div>
+
+        ${renderTransferSummaryList(summary)}
+
+        ${summary.total > 0 ? `
+            <div class="form-group">
+                <label class="form-label"><span class="required">*</span>选择接收人</label>
+                ${receivers.length > 0 ? `
+                    <div class="transfer-receiver-list">
+                        ${receivers.map(receiver => `
+                            <label class="transfer-receiver-item">
+                                <input type="radio" name="transferReceiver" value="${receiver.id}" onchange="selectedTransferReceiverId='${receiver.id}'">
+                                <div>
+                                    <div class="transfer-receiver-name">${escapeHtml(receiver.name)}</div>
+                                    <div class="transfer-receiver-meta">${escapeHtml(receiver.dept)} · ${receiver.roleLabel} · ${receiver.matchType}</div>
+                                </div>
+                            </label>
+                        `).join('')}
+                    </div>
+                ` : `
+                    <div class="empty-state transfer-empty">
+                        <p>没有可用的同角色或同科室在职接收人，暂不能停用该人员。</p>
+                    </div>
+                `}
+            </div>
+        ` : `
+            <div class="transfer-clean-tip">该人员名下没有需要移交的未完成事项，可以直接停用。</div>
+        `}
+
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-danger" onclick="submitDeactivateWithTransfer()" ${summary.total > 0 && receivers.length === 0 ? 'disabled' : ''}>
+                ${summary.total > 0 ? '移交并停用' : '确认停用'}
+            </button>
+        </div>
+    `;
+
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function renderTransferSummaryList(summary) {
+    if (!summary || summary.total === 0) {
+        return '';
+    }
+
+    const renderRows = (title, items, renderer) => `
+        <div class="transfer-list-block">
+            <div class="transfer-list-title">${title}（${items.length}）</div>
+            ${items.length > 0 ? `
+                <div class="transfer-list">
+                    ${items.slice(0, 5).map(renderer).join('')}
+                    ${items.length > 5 ? `<div class="transfer-list-more">还有 ${items.length - 5} 项...</div>` : ''}
+                </div>
+            ` : '<div class="transfer-list-empty">无</div>'}
+        </div>
+    `;
+
+    return `
+        <div class="transfer-summary-list">
+            ${renderRows('未完成公文', summary.docs, doc => `
+                <div class="transfer-list-item">
+                    <span>${escapeHtml(doc.title)}</span>
+                    <em>${escapeHtml(doc.id)} · ${escapeHtml(doc.nodeLabel)}</em>
+                </div>
+            `)}
+            ${renderRows('草稿', summary.drafts, draft => `
+                <div class="transfer-list-item">
+                    <span>${escapeHtml(draft.title)}</span>
+                    <em>最后保存：${formatDateTime(draft.updatedAt)}</em>
+                </div>
+            `)}
+            ${renderRows('未读消息', summary.messages, msg => `
+                <div class="transfer-list-item">
+                    <span>${escapeHtml(msg.title || '未读消息')}</span>
+                    <em>${escapeHtml(msg.docTitle || '')}${msg.createdAt ? ' · ' + formatDateTime(msg.createdAt) : ''}</em>
+                </div>
+            `)}
+        </div>
+    `;
+}
+
+function submitDeactivateWithTransfer() {
+    const userId = pendingDeactivateUserId;
+    const user = userStore.getUserById(userId);
+    if (!user) return;
+
+    const summary = dataStore.getTransferSummary(userId);
+    if (summary.total > 0 && !selectedTransferReceiverId) {
+        showToast('请选择接收人', 'error');
         return;
     }
+
+    if (!confirm(`确定停用人员"${user.name}"吗？${summary.total > 0 ? '\n\n系统将先完成待办移交，再停用账号。' : ''}`)) {
+        return;
+    }
+
+    let transferResult = { success: true, counts: { docs: 0, drafts: 0, messages: 0 } };
+    if (summary.total > 0) {
+        transferResult = dataStore.transferUserWork(userId, selectedTransferReceiverId, currentUser || user);
+        if (!transferResult.success) {
+            showToast(transferResult.error || '移交失败', 'error');
+            return;
+        }
+    }
+
     const result = userStore.deleteUser(userId);
     if (result.success) {
-        showToast('人员已停用');
+        closeModal();
+        const counts = transferResult.counts;
+        const transferText = summary.total > 0
+            ? `，已移交公文${counts.docs}件、草稿${counts.drafts}篇、未读消息${counts.messages}条`
+            : '';
+        showToast('人员已停用' + transferText);
         renderUserManageTabContent();
+        renderNav();
     } else {
         showToast(result.error || '操作失败', 'error');
     }
