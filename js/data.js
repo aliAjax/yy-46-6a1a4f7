@@ -2873,6 +2873,22 @@ class MessageStore {
         return userMessages.length;
     }
 
+    markDocMessagesAsRead(docId, role, user) {
+        if (!docId) return 0;
+        const docMessages = this.getMessagesForUser(role, user).filter(msg => msg.docId === docId);
+        let changedCount = 0;
+        docMessages.forEach(msg => {
+            if (!msg.read) {
+                msg.read = true;
+                changedCount++;
+            }
+        });
+        if (changedCount > 0) {
+            this.save();
+        }
+        return changedCount;
+    }
+
     getMessage(id) {
         return this.messages.find(m => m.id === id);
     }

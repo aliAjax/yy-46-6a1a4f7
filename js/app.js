@@ -4142,7 +4142,9 @@ function getMessageIcon(type) {
         [MESSAGE_TYPES.DOC_FEEDBACK]: '📤',
         [MESSAGE_TYPES.DOC_COMPLETED]: '✅',
         [MESSAGE_TYPES.DOC_ARCHIVED]: '📦',
-        [MESSAGE_TYPES.SUPERVISION]: '📢'
+        [MESSAGE_TYPES.SUPERVISION]: '📢',
+        [MESSAGE_TYPES.DOC_RETURNED]: '↩️',
+        [MESSAGE_TYPES.DOC_RESUBMITTED]: '🔁'
     };
     return icons[type] || '🔔';
 }
@@ -4152,6 +4154,140 @@ function getMessageTypeLabel(type) {
 }
 
 let messageFilterType = '';
+let messageViewMode = 'list';
+const expandedDocGroups = new Set();
+
+function groupMessagesByDoc(messages) {
+    const groupMap = new Map();
+
+    messages.forEach(msg => {
+        const docKey = msg.docId || `message_${msg.id}`;
+        if (!groupMap.has(docKey)) {
+            groupMap.set(docKey, {
+                docId: msg.docId,
+                docTitle: msg.docTitle || '未关联公文',
+                latestAt: msg.createdAt,
+                latestMessage: msg,
+                messages: [],
+                unreadCount: 0
+            });
+        }
+
+        const group = groupMap.get(docKey);
+        group.messages.push(msg);
+        if (!msg.read) {
+            group.unreadCount++;
+        }
+        if (new Date(msg.createdAt) > new Date(group.latestAt)) {
+            group.latestAt = msg.createdAt;
+            group.latestMessage = msg;
+        }
+    });
+
+    return Array.from(groupMap.values())
+        .map(group => ({
+            ...group,
+            messages: group.messages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        }))
+        .sort((a, b) => new Date(b.latestAt) - new Date(a.latestAt));
+}
+
+function renderMessageListItems(messages) {
+    return messages.map(msg => `
+        <div class="message-item-full ${msg.read ? '' : 'unread'}"
+             onclick="handleMessageClick('${msg.id}', '${msg.docId || ''}')">
+            <div class="message-icon msg-${msg.type}">
+                ${getMessageIcon(msg.type)}
+            </div>
+            <div class="message-content-full">
+                <div class="message-header">
+                    <div class="message-title-full">
+                        ${msg.read ? '' : '<span class="message-dot"></span>'}
+                        ${escapeHtml(msg.title)}
+                    </div>
+                    <span class="message-type-tag">${getMessageTypeLabel(msg.type)}</span>
+                </div>
+                <div class="message-body">
+                    ${escapeHtml(msg.content)}
+                </div>
+                <div class="message-footer">
+                    <span class="message-from">来自：${escapeHtml(msg.fromUserName || '-')}</span>
+                    <span class="message-time">${formatDateTime(msg.createdAt)}</span>
+                    ${msg.read ? '' : `<span class="mark-read-btn" onclick="event.stopPropagation(); markMessageRead('${msg.id}')">标为已读</span>`}
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderGroupedMessages(groups) {
+    return groups.map(group => {
+        const isExpanded = expandedDocGroups.has(group.docId);
+        const unreadClass = group.unreadCount > 0 ? 'unread' : '';
+        const latest = group.latestMessage;
+        return `
+            <div class="message-doc-group ${unreadClass}" data-doc-id="${group.docId || ''}">
+                <div class="message-group-main" onclick="handleMessageGroupClick('${group.docId || ''}')">
+                    <button class="message-expand-btn ${isExpanded ? 'expanded' : ''}"
+                            onclick="event.stopPropagation(); toggleMessageGroup('${group.docId || ''}')"
+                            title="${isExpanded ? '收起记录' : '展开记录'}">
+                        ${isExpanded ? '▾' : '▸'}
+                    </button>
+                    <div class="message-icon msg-${latest.type}">
+                        ${getMessageIcon(latest.type)}
+                    </div>
+                    <div class="message-group-content">
+                        <div class="message-group-header">
+                            <div class="message-group-title">
+                                ${group.unreadCount > 0 ? '<span class="message-dot"></span>' : ''}
+                                ${escapeHtml(group.docTitle)}
+                            </div>
+                            <div class="message-group-meta">
+                                <span class="message-type-tag">${group.messages.length} 条记录</span>
+                                ${group.unreadCount > 0 ? `<span class="message-unread-tag">${group.unreadCount} 未读</span>` : ''}
+                            </div>
+                        </div>
+                        <div class="message-body">
+                            ${escapeHtml(latest.content)}
+                        </div>
+                        <div class="message-footer">
+                            <span class="message-from">最近来自：${escapeHtml(latest.fromUserName || '-')}</span>
+                            <span class="message-time">${formatDateTime(group.latestAt)}</span>
+                            ${group.unreadCount > 0 ? `<span class="mark-read-btn" onclick="event.stopPropagation(); markDocMessagesRead('${group.docId || ''}')">全部标为已读</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+                ${isExpanded ? `
+                    <div class="message-group-records">
+                        ${group.messages.map(msg => `
+                            <div class="message-group-record ${msg.read ? '' : 'unread'}"
+                                 onclick="handleMessageClick('${msg.id}', '${msg.docId || ''}')">
+                                <div class="message-icon msg-${msg.type}">
+                                    ${getMessageIcon(msg.type)}
+                                </div>
+                                <div class="message-content-full">
+                                    <div class="message-header">
+                                        <div class="message-title-full">
+                                            ${msg.read ? '' : '<span class="message-dot"></span>'}
+                                            ${escapeHtml(msg.title)}
+                                        </div>
+                                        <span class="message-type-tag">${getMessageTypeLabel(msg.type)}</span>
+                                    </div>
+                                    <div class="message-body">${escapeHtml(msg.content)}</div>
+                                    <div class="message-footer">
+                                        <span class="message-from">来自：${escapeHtml(msg.fromUserName || '-')}</span>
+                                        <span class="message-time">${formatDateTime(msg.createdAt)}</span>
+                                        ${msg.read ? '' : `<span class="mark-read-btn" onclick="event.stopPropagation(); markMessageRead('${msg.id}')">标为已读</span>`}
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+}
 
 function renderMessageList() {
     const content = document.getElementById('contentArea');
@@ -4165,12 +4301,20 @@ function renderMessageList() {
         { value: MESSAGE_TYPES.DOC_HANDLED, label: '办理中' },
         { value: MESSAGE_TYPES.DOC_FEEDBACK, label: '已反馈' },
         { value: MESSAGE_TYPES.DOC_COMPLETED, label: '待归档' },
-        { value: MESSAGE_TYPES.DOC_ARCHIVED, label: '已归档' }
+        { value: MESSAGE_TYPES.DOC_ARCHIVED, label: '已归档' },
+        { value: MESSAGE_TYPES.SUPERVISION, label: '督办' },
+        { value: MESSAGE_TYPES.DOC_RETURNED, label: '已退回' },
+        { value: MESSAGE_TYPES.DOC_RESUBMITTED, label: '已重提' }
     ];
 
     const filteredMessages = messageFilterType
         ? allMessages.filter(m => m.type === messageFilterType)
         : allMessages;
+    const groupedMessages = groupMessagesByDoc(filteredMessages);
+    const displayedCount = messageViewMode === 'grouped' ? groupedMessages.length : filteredMessages.length;
+    const countLabel = messageViewMode === 'grouped'
+        ? `共 ${displayedCount} 份公文，${filteredMessages.length} 条消息`
+        : `共 ${displayedCount} 条消息`;
 
     content.innerHTML = `
         <div class="page-header">
@@ -4194,8 +4338,18 @@ function renderMessageList() {
                         `).join('')}
                     </div>
                     <div class="message-count-info">
-                        共 ${filteredMessages.length} 条消息
+                        ${countLabel}
                     </div>
+                </div>
+                <div class="message-view-switch">
+                    <button class="message-view-btn ${messageViewMode === 'list' ? 'active' : ''}"
+                            onclick="setMessageViewMode('list')">
+                        列表
+                    </button>
+                    <button class="message-view-btn ${messageViewMode === 'grouped' ? 'active' : ''}"
+                            onclick="setMessageViewMode('grouped')">
+                        按公文聚合
+                    </button>
                 </div>
             </div>
         </div>
@@ -4204,36 +4358,17 @@ function renderMessageList() {
             <div class="card-body" style="padding:0;">
                 ${filteredMessages.length > 0 ? `
                     <div class="message-list-full">
-                        ${filteredMessages.map(msg => `
-                            <div class="message-item-full ${msg.read ? '' : 'unread'}"
-                                 onclick="handleMessageClick('${msg.id}', '${msg.docId}')">
-                                <div class="message-icon msg-${msg.type}">
-                                    ${getMessageIcon(msg.type)}
-                                </div>
-                                <div class="message-content-full">
-                                    <div class="message-header">
-                                        <div class="message-title-full">
-                                            ${msg.read ? '' : '<span class="message-dot"></span>'}
-                                            ${msg.title}
-                                        </div>
-                                        <span class="message-type-tag">${getMessageTypeLabel(msg.type)}</span>
-                                    </div>
-                                    <div class="message-body">
-                                        ${msg.content}
-                                    </div>
-                                    <div class="message-footer">
-                                        <span class="message-from">来自：${msg.fromUserName}</span>
-                                        <span class="message-time">${formatDateTime(msg.createdAt)}</span>
-                                        ${msg.read ? '' : '<span class="mark-read-btn" onclick="event.stopPropagation(); markMessageRead(\'' + msg.id + '\')">标为已读</span>'}
-                                    </div>
-                                </div>
-                            </div>
-                        `).join('')}
+                        ${messageViewMode === 'grouped' ? renderGroupedMessages(groupedMessages) : renderMessageListItems(filteredMessages)}
                     </div>
                 ` : '<div class="empty-state"><div class="empty-icon">🔔</div><p>暂无消息</p></div>'}
             </div>
         </div>
     `;
+}
+
+function setMessageViewMode(mode) {
+    messageViewMode = mode;
+    renderMessageList();
 }
 
 function filterMessages(type) {
@@ -4245,12 +4380,40 @@ function handleMessageClick(messageId, docId) {
     messageStore.markAsRead(messageId);
     if (docId) {
         navigateTo('detail', { id: docId });
+    } else {
+        renderMessageList();
     }
+    renderNav();
+}
+
+function toggleMessageGroup(docId) {
+    if (!docId) return;
+    if (expandedDocGroups.has(docId)) {
+        expandedDocGroups.delete(docId);
+    } else {
+        expandedDocGroups.add(docId);
+    }
+    renderMessageList();
+}
+
+function handleMessageGroupClick(docId) {
+    if (!docId) return;
+    messageStore.markDocMessagesAsRead(docId, currentRole, currentUser);
+    navigateTo('detail', { id: docId });
     renderNav();
 }
 
 function markMessageRead(messageId) {
     messageStore.markAsRead(messageId);
+    renderMessageList();
+    renderNav();
+}
+
+function markDocMessagesRead(docId) {
+    const changedCount = messageStore.markDocMessagesAsRead(docId, currentRole, currentUser);
+    if (changedCount > 0) {
+        showToast('该公文消息已全部标为已读');
+    }
     renderMessageList();
     renderNav();
 }
