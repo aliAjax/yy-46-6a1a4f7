@@ -12,6 +12,9 @@ let currentImportFilters = {};
 
 let currentAttachmentFilters = {};
 
+let currentDraftId = null;
+let currentDraftFilters = {};
+
 let loginSelectedRole = ROLES.OFFICE;
 
 function init() {
@@ -110,6 +113,9 @@ function renderNav() {
 
     if (currentRole === ROLES.OFFICE) {
         menuItems.push({ key: 'register', label: '收文登记', icon: '✍️' });
+        const draftCount = dataStore.getDraftStats(currentUser).total;
+        const draftBadge = draftCount > 0 ? `<span class="nav-badge">${draftCount > 99 ? '99+' : draftCount}</span>` : '';
+        menuItems.push({ key: 'drafts', label: '公文草稿箱', icon: '💾', badge: draftBadge });
         menuItems.push({ key: 'batchImport', label: '批量收文导入', icon: '📥' });
         menuItems.push({ key: 'archive', label: '归档库', icon: '📦' });
         menuItems.push({ key: 'userManage', label: '角色与人员管理', icon: '👥' });
@@ -160,7 +166,11 @@ function navigateTo(page, params = {}) {
             renderSupervisionCenter();
             break;
         case 'register':
+            currentDraftId = params.draftId || null;
             renderRegisterForm();
+            break;
+        case 'drafts':
+            renderDraftList();
             break;
         case 'batchImport':
             renderBatchImportList();
@@ -1442,56 +1452,63 @@ function goToDocFromAttachment(docId, recordId) {
 
 function renderRegisterForm() {
     const content = document.getElementById('contentArea');
+    const editingDraft = currentDraftId ? dataStore.getDraft(currentDraftId) : null;
+    const isDraftEdit = !!editingDraft;
+
+    if (currentDraftId && !editingDraft) {
+        currentDraftId = null;
+    }
+
+    registerAttachments = isDraftEdit ? [...(editingDraft.attachments || [])] : [];
 
     content.innerHTML = `
         <div class="page-header">
-            <h2 class="page-title">收文登记</h2>
-            <button class="btn btn-default" onclick="navigateTo('list')">返回列表</button>
+            <div>
+                <h2 class="page-title">${isDraftEdit ? '编辑草稿' : '收文登记'}</h2>
+                ${isDraftEdit ? `<div class="page-subtitle">最后保存：${formatDateTime(editingDraft.updatedAt)}</div>` : ''}
+            </div>
+            <button class="btn btn-default" onclick="navigateTo('${isDraftEdit ? 'drafts' : 'list'}')">返回${isDraftEdit ? '草稿箱' : '列表'}</button>
         </div>
 
         <div class="card">
             <div class="card-body">
+                ${isDraftEdit ? '<div class="draft-info-bar">当前正在编辑草稿，提交后才会生成正式文号并进入待批示流程。</div>' : ''}
                 <div class="detail-grid">
                     <div class="form-group">
                         <label class="form-label"><span class="required">*</span>公文标题</label>
-                        <input type="text" class="form-input" id="regTitle" placeholder="请输入公文标题">
+                        <input type="text" class="form-input" id="regTitle" placeholder="请输入公文标题" value="${escapeHtml(editingDraft?.title || '')}">
                     </div>
                     <div class="form-group">
                         <label class="form-label"><span class="required">*</span>来文单位</label>
-                        <input type="text" class="form-input" id="regFromUnit" placeholder="请输入来文单位">
+                        <input type="text" class="form-input" id="regFromUnit" placeholder="请输入来文单位" value="${escapeHtml(editingDraft?.fromUnit || '')}">
                     </div>
                     <div class="form-group">
                         <label class="form-label">来文字号</label>
-                        <input type="text" class="form-input" id="regDocNumber" placeholder="如：市政办发〔2025〕1号">
+                        <input type="text" class="form-input" id="regDocNumber" placeholder="如：市政办发〔2025〕1号" value="${escapeHtml(editingDraft?.docNumber || '')}">
                     </div>
                     <div class="form-group">
                         <label class="form-label">来文日期</label>
-                        <input type="date" class="form-input" id="regDocDate">
+                        <input type="date" class="form-input" id="regDocDate" value="${editingDraft?.docDate || ''}">
                     </div>
                     <div class="form-group">
                         <label class="form-label">紧急程度</label>
                         <select class="form-select" id="regPriority">
-                            <option value="normal">普通</option>
-                            <option value="high">加急</option>
-                            <option value="urgent">特急</option>
+                            <option value="normal" ${(editingDraft?.priority || 'normal') === 'normal' ? 'selected' : ''}>普通</option>
+                            <option value="high" ${editingDraft?.priority === 'high' ? 'selected' : ''}>加急</option>
+                            <option value="urgent" ${editingDraft?.priority === 'urgent' ? 'selected' : ''}>特急</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label class="form-label">公文类别</label>
                         <select class="form-select" id="regCategory">
-                            <option value="">请选择</option>
-                            <option value="通知">通知</option>
-                            <option value="请示">请示</option>
-                            <option value="报告">报告</option>
-                            <option value="批复">批复</option>
-                            <option value="函">函</option>
-                            <option value="会议纪要">会议纪要</option>
-                            <option value="其他">其他</option>
+                            ${['', '通知', '请示', '报告', '批复', '函', '会议纪要', '其他'].map(c =>
+                                `<option value="${c}" ${(editingDraft?.category || '') === c ? 'selected' : ''}>${c || '请选择'}</option>`
+                            ).join('')}
                         </select>
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label">公文内容摘要</label>
-                        <textarea class="form-textarea" id="regContent" rows="4" placeholder="请输入公文内容摘要"></textarea>
+                        <textarea class="form-textarea" id="regContent" rows="4" placeholder="请输入公文内容摘要">${escapeHtml(editingDraft?.content || '')}</textarea>
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label">附件上传</label>
@@ -1500,20 +1517,23 @@ function renderRegisterForm() {
                             <div class="upload-text">点击上传附件，或拖拽文件到此处</div>
                             <input type="file" id="regAttachments" multiple onchange="handleFileSelect(this, 'regAttachmentsList')">
                         </div>
-                        <div class="attachment-list" id="regAttachmentsList" style="margin-top:12px;"></div>
+                        <div class="attachment-list" id="regAttachmentsList" style="margin-top:12px;">${renderAttachmentItems(registerAttachments, 'regAttachmentsList')}</div>
                     </div>
                 </div>
 
                 <div style="margin-top:24px; text-align:right;">
-                    <button class="btn btn-default" onclick="navigateTo('list')" style="margin-right:8px;">取消</button>
+                    <button class="btn btn-default" onclick="navigateTo('${isDraftEdit ? 'drafts' : 'list'}')" style="margin-right:8px;">取消</button>
+                    <button class="btn btn-warning btn-lg" onclick="saveRegisterDraft()" style="margin-right:8px;">保存草稿</button>
                     <button class="btn btn-primary btn-lg" onclick="submitRegister()">提交登记</button>
                 </div>
             </div>
         </div>
     `;
 
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('regDocDate').value = today;
+    if (!isDraftEdit) {
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('regDocDate').value = today;
+    }
 }
 
 let registerAttachments = [];
@@ -1533,30 +1553,77 @@ function handleFileSelect(input, listId) {
         if (listId === 'regAttachmentsList') {
             registerAttachments.push(attachment);
         }
-
-        const item = document.createElement('div');
-        item.className = 'attachment-item';
-        item.innerHTML = `
-            <span class="attachment-icon">📄</span>
-            <span class="attachment-name">${attachment.name}</span>
-            <span class="attachment-size">${attachment.size}</span>
-            <a class="action-link" onclick="this.parentElement.remove(); removeAttachment('${attachment.id}', '${listId}')">删除</a>
-        `;
-        list.appendChild(item);
     }
 
+    if (listId === 'regAttachmentsList') {
+        list.innerHTML = renderAttachmentItems(registerAttachments, listId);
+    }
     input.value = '';
 }
 
 function removeAttachment(id, listId) {
     if (listId === 'regAttachmentsList') {
         registerAttachments = registerAttachments.filter(a => a.id !== id);
+        const list = document.getElementById(listId);
+        if (list) {
+            list.innerHTML = renderAttachmentItems(registerAttachments, listId);
+        }
     }
 }
 
+function renderAttachmentItems(attachments, listId) {
+    if (!attachments || attachments.length === 0) {
+        return '';
+    }
+    return attachments.map(attachment => `
+        <div class="attachment-item">
+            <span class="attachment-icon">📄</span>
+            <span class="attachment-name">${escapeHtml(attachment.name)}</span>
+            <span class="attachment-size">${escapeHtml(attachment.size || '')}</span>
+            <a class="action-link" onclick="removeAttachment('${attachment.id}', '${listId}')">删除</a>
+        </div>
+    `).join('');
+}
+
+function getRegisterFormData() {
+    return {
+        title: document.getElementById('regTitle').value.trim(),
+        fromUnit: document.getElementById('regFromUnit').value.trim(),
+        docNumber: document.getElementById('regDocNumber').value.trim(),
+        docDate: document.getElementById('regDocDate').value,
+        priority: document.getElementById('regPriority').value,
+        category: document.getElementById('regCategory').value,
+        content: document.getElementById('regContent').value.trim(),
+        attachments: [...registerAttachments]
+    };
+}
+
+function saveRegisterDraft() {
+    const draftData = getRegisterFormData();
+    if (!draftData.title && !draftData.fromUnit && !draftData.docNumber && !draftData.content && draftData.attachments.length === 0) {
+        showToast('请先填写草稿内容', 'error');
+        return;
+    }
+
+    const draft = currentDraftId
+        ? dataStore.updateDraft(currentDraftId, draftData, currentUser)
+        : dataStore.createDraft(draftData, currentUser);
+
+    if (!draft) {
+        showToast('草稿保存失败', 'error');
+        return;
+    }
+
+    currentDraftId = draft.id;
+    renderNav();
+    showToast('草稿已保存');
+    renderRegisterForm();
+}
+
 function submitRegister() {
-    const title = document.getElementById('regTitle').value.trim();
-    const fromUnit = document.getElementById('regFromUnit').value.trim();
+    const docData = getRegisterFormData();
+    const title = docData.title;
+    const fromUnit = docData.fromUnit;
 
     if (!title) {
         showToast('请输入公文标题', 'error');
@@ -1567,22 +1634,162 @@ function submitRegister() {
         return;
     }
 
-    const docData = {
-        title: title,
-        fromUnit: fromUnit,
-        docNumber: document.getElementById('regDocNumber').value.trim(),
-        docDate: document.getElementById('regDocDate').value,
-        priority: document.getElementById('regPriority').value,
-        category: document.getElementById('regCategory').value,
-        content: document.getElementById('regContent').value.trim(),
-        attachments: registerAttachments
-    };
-
-    const doc = dataStore.createDoc(docData, currentUser);
+    let doc;
+    if (currentDraftId) {
+        const draft = dataStore.updateDraft(currentDraftId, docData, currentUser);
+        if (!draft) {
+            showToast('草稿不存在或无权提交', 'error');
+            return;
+        }
+        const result = dataStore.submitDraft(currentDraftId, currentUser);
+        if (!result.success) {
+            showToast(result.error || '草稿提交失败', 'error');
+            return;
+        }
+        doc = result.doc;
+        currentDraftId = null;
+    } else {
+        doc = dataStore.createDoc(docData, currentUser);
+    }
     registerAttachments = [];
 
     showToast('收文登记成功！');
+    renderNav();
     navigateTo('detail', { id: doc.id });
+}
+
+function renderDraftList() {
+    const content = document.getElementById('contentArea');
+    const keyword = currentDraftFilters.keyword || '';
+
+    content.innerHTML = `
+        <div class="page-header">
+            <div>
+                <h2 class="page-title">公文草稿箱</h2>
+                <div class="page-subtitle">草稿不会进入待批示流程，提交后才生成正式文号</div>
+            </div>
+            <button class="btn btn-primary" onclick="navigateTo('register')">+ 新建草稿</button>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="search-bar draft-search-bar">
+                    <div class="form-group">
+                        <label class="form-label">关键词</label>
+                        <input type="text" class="form-input" id="draftKeyword" placeholder="标题、来文单位、来文字号"
+                               value="${escapeHtml(keyword)}"
+                               onkeyup="if(event.key==='Enter') applyDraftFilters()">
+                    </div>
+                    <div class="search-actions">
+                        <button class="btn btn-primary" onclick="applyDraftFilters()">🔍 查询</button>
+                        <button class="btn btn-default" onclick="resetDraftFilters()">重置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body" style="padding:0;" id="draftListTable">
+                ${renderDraftTable()}
+            </div>
+        </div>
+    `;
+}
+
+function applyDraftFilters() {
+    currentDraftFilters = {
+        keyword: document.getElementById('draftKeyword').value.trim()
+    };
+    document.getElementById('draftListTable').innerHTML = renderDraftTable();
+}
+
+function resetDraftFilters() {
+    currentDraftFilters = {};
+    const input = document.getElementById('draftKeyword');
+    if (input) input.value = '';
+    document.getElementById('draftListTable').innerHTML = renderDraftTable();
+}
+
+function renderDraftTable() {
+    const drafts = dataStore.listDrafts({
+        ...currentDraftFilters,
+        userId: currentUser.id
+    });
+
+    if (drafts.length === 0) {
+        return '<div class="empty-state"><div class="empty-icon">💾</div><p>暂无符合条件的草稿</p></div>';
+    }
+
+    return `
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>标题</th>
+                        <th>来文单位</th>
+                        <th>来文字号</th>
+                        <th>紧急程度</th>
+                        <th>附件</th>
+                        <th>保存时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${drafts.map(draft => `
+                        <tr>
+                            <td>
+                                <div class="doc-title-cell">
+                                    <span class="status-badge status-draft">草稿</span>
+                                    <span>${escapeHtml(draft.title || '未命名草稿')}</span>
+                                </div>
+                            </td>
+                            <td>${escapeHtml(draft.fromUnit || '-')}</td>
+                            <td>${escapeHtml(draft.docNumber || '-')}</td>
+                            <td>${getPriorityLabel(draft.priority)}</td>
+                            <td>${(draft.attachments || []).length}个</td>
+                            <td>${formatDateTime(draft.updatedAt)}</td>
+                            <td>
+                                <div class="actions">
+                                    <a class="action-link" onclick="navigateTo('register', {draftId: '${draft.id}'})">编辑</a>
+                                    <a class="action-link" onclick="submitDraftFromList('${draft.id}')">提交</a>
+                                    <a class="action-link danger" onclick="deleteDraftFromList('${draft.id}')">删除</a>
+                                </div>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function submitDraftFromList(draftId) {
+    if (!confirm('提交后将生成正式公文并进入待批示流程，确认提交？')) {
+        return;
+    }
+    const result = dataStore.submitDraft(draftId, currentUser);
+    if (!result.success) {
+        showToast(result.error || '草稿提交失败', 'error');
+        return;
+    }
+    showToast('草稿已提交为正式公文');
+    renderNav();
+    navigateTo('detail', { id: result.doc.id });
+}
+
+function deleteDraftFromList(draftId) {
+    if (!confirm('确认删除该草稿？删除后无法恢复。')) {
+        return;
+    }
+    if (!dataStore.deleteDraft(draftId, currentUser)) {
+        showToast('草稿删除失败', 'error');
+        return;
+    }
+    showToast('草稿已删除');
+    renderNav();
+    if (currentPage === 'drafts') {
+        renderDraftList();
+    }
 }
 
 function renderDocDetail() {

@@ -562,6 +562,36 @@ body {
     color: #333;
 }
 
+.page-subtitle {
+    margin-top: 4px;
+    color: #888;
+    font-size: 13px;
+}
+
+.draft-info-bar {
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: #fff7e6;
+    border: 1px solid #ffd591;
+    border-radius: 6px;
+    color: #8a5700;
+}
+
+.draft-search-bar {
+    align-items: flex-end;
+}
+
+.doc-title-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 180px;
+}
+
+.action-link.danger {
+    color: #f5222d;
+}
+
 /* Detail View */
 .detail-grid {
     display: grid;

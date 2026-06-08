@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'doc_flow_system';
+const DRAFT_STORAGE_KEY = 'doc_flow_drafts';
 
 const ROLES = {
     OFFICE: 'office',
@@ -615,6 +616,7 @@ function getCoHandleProgress(doc) {
 class DataStore {
     constructor() {
         this.docs = [];
+        this.drafts = [];
         this.currentUser = null;
         this.currentRole = null;
         this.load();
@@ -630,6 +632,37 @@ class DataStore {
             } catch (e) {
                 this.docs = [];
             }
+        }
+        const draftData = localStorage.getItem(DRAFT_STORAGE_KEY);
+        if (draftData) {
+            try {
+                const parsed = JSON.parse(draftData);
+                this.drafts = parsed.drafts || [];
+                this.migrateDrafts();
+            } catch (e) {
+                this.drafts = [];
+            }
+        }
+    }
+
+    migrateDrafts() {
+        let changed = false;
+        this.drafts.forEach(draft => {
+            if (!draft.attachments) {
+                draft.attachments = [];
+                changed = true;
+            }
+            if (!draft.createdAt) {
+                draft.createdAt = draft.updatedAt || new Date().toISOString();
+                changed = true;
+            }
+            if (!draft.updatedAt) {
+                draft.updatedAt = draft.createdAt;
+                changed = true;
+            }
+        });
+        if (changed) {
+            this.saveDrafts();
         }
     }
 
@@ -728,6 +761,12 @@ class DataStore {
         }));
     }
 
+    saveDrafts() {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
+            drafts: this.drafts
+        }));
+    }
+
     generateDocId() {
         const now = new Date();
         const year = now.getFullYear();
@@ -737,6 +776,117 @@ class DataStore {
 
     generateRecordId(docId) {
         return `rec_${docId}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    }
+
+    generateDraftId() {
+        return `draft_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    }
+
+    normalizeDraftData(draftData = {}) {
+        return {
+            title: draftData.title || '',
+            fromUnit: draftData.fromUnit || '',
+            docNumber: draftData.docNumber || '',
+            docDate: draftData.docDate || '',
+            priority: draftData.priority || 'normal',
+            category: draftData.category || '',
+            content: draftData.content || '',
+            attachments: Array.isArray(draftData.attachments) ? draftData.attachments : []
+        };
+    }
+
+    createDraft(draftData, creator) {
+        const now = new Date().toISOString();
+        const draft = {
+            id: this.generateDraftId(),
+            ...this.normalizeDraftData(draftData),
+            createdAt: now,
+            updatedAt: now,
+            createdBy: creator.id,
+            createdByName: creator.name
+        };
+        this.drafts.unshift(draft);
+        this.saveDrafts();
+        return draft;
+    }
+
+    updateDraft(id, draftData, operator) {
+        const draft = this.getDraft(id);
+        if (!draft) {
+            return null;
+        }
+        if (operator && draft.createdBy !== operator.id) {
+            return null;
+        }
+        Object.assign(draft, this.normalizeDraftData(draftData), {
+            updatedAt: new Date().toISOString()
+        });
+        this.saveDrafts();
+        return draft;
+    }
+
+    getDraft(id) {
+        return this.drafts.find(d => d.id === id) || null;
+    }
+
+    listDrafts(filters = {}) {
+        let result = [...this.drafts];
+
+        if (filters.userId) {
+            result = result.filter(d => d.createdBy === filters.userId);
+        }
+
+        if (filters.keyword) {
+            const kw = filters.keyword.toLowerCase();
+            result = result.filter(d =>
+                (d.title || '').toLowerCase().includes(kw) ||
+                (d.fromUnit || '').toLowerCase().includes(kw) ||
+                (d.docNumber || '').toLowerCase().includes(kw)
+            );
+        }
+
+        result.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+        return result;
+    }
+
+    deleteDraft(id, operator) {
+        const draft = this.getDraft(id);
+        if (!draft || (operator && draft.createdBy !== operator.id)) {
+            return false;
+        }
+        this.drafts = this.drafts.filter(d => d.id !== id);
+        this.saveDrafts();
+        return true;
+    }
+
+    submitDraft(id, operator) {
+        const draft = this.getDraft(id);
+        if (!draft || (operator && draft.createdBy !== operator.id)) {
+            return { success: false, error: '草稿不存在或无权提交' };
+        }
+        if (!draft.title || !draft.title.trim()) {
+            return { success: false, error: '请输入公文标题' };
+        }
+        if (!draft.fromUnit || !draft.fromUnit.trim()) {
+            return { success: false, error: '请输入来文单位' };
+        }
+
+        const doc = this.createDoc(this.normalizeDraftData(draft), operator);
+        const registerRecord = doc.flowRecords && doc.flowRecords[0];
+        if (registerRecord) {
+            registerRecord.comment = '由草稿提交登记';
+            registerRecord.fromDraftId = draft.id;
+        }
+        this.deleteDraft(id, operator);
+        this.save();
+        return { success: true, doc };
+    }
+
+    getDraftStats(user) {
+        if (!user) return { total: 0 };
+        return {
+            total: this.listDrafts({ userId: user.id }).length
+        };
     }
 
     createDoc(docData, creator) {
