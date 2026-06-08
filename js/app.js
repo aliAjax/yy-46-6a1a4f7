@@ -1226,6 +1226,11 @@ function renderAttachmentCenter() {
         fileTypeOptions.push({ value: key, label: label });
     });
 
+    const categoryOptions = [{ value: '', label: '全部分类' }];
+    Object.entries(ATTACHMENT_CATEGORY_LABELS).forEach(([key, label]) => {
+        categoryOptions.push({ value: key, label: label });
+    });
+
     const uploaderOptions = [{ value: '', label: '全部上传人' }];
     userStore.getAllUsers().forEach(u => {
         uploaderOptions.push({ value: u.id, label: `${u.name}（${u.dept}）` });
@@ -1236,6 +1241,7 @@ function renderAttachmentCenter() {
     const uploaderId = currentAttachmentFilters.uploaderId || '';
     const uploaderDept = currentAttachmentFilters.uploaderDept || '';
     const fileType = currentAttachmentFilters.fileType || '';
+    const category = currentAttachmentFilters.category || '';
     const startDate = currentAttachmentFilters.startDate || '';
     const endDate = currentAttachmentFilters.endDate || '';
 
@@ -1310,6 +1316,12 @@ function renderAttachmentCenter() {
                         </select>
                     </div>
                     <div class="form-group">
+                        <label class="form-label">附件分类</label>
+                        <select class="form-select" id="attCategory" onchange="applyAttachmentFilters()">
+                            ${categoryOptions.map(o => `<option value="${o.value}" ${o.value === category ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label class="form-label">开始日期</label>
                         <input type="date" class="form-input" id="attStartDate" value="${startDate}" onchange="applyAttachmentFilters()">
                     </div>
@@ -1340,6 +1352,7 @@ function applyAttachmentFilters() {
         uploaderId: document.getElementById('attUploader').value,
         uploaderDept: document.getElementById('attDept').value,
         fileType: document.getElementById('attFileType').value,
+        category: document.getElementById('attCategory').value,
         startDate: document.getElementById('attStartDate').value,
         endDate: document.getElementById('attEndDate').value
     };
@@ -1353,6 +1366,7 @@ function resetAttachmentFilters() {
     document.getElementById('attDept').value = '';
     document.getElementById('attUploader').value = '';
     document.getElementById('attFileType').value = '';
+    document.getElementById('attCategory').value = '';
     document.getElementById('attStartDate').value = '';
     document.getElementById('attEndDate').value = '';
     document.getElementById('attachmentListTable').innerHTML = renderAttachmentTable();
@@ -1392,6 +1406,7 @@ function renderAttachmentTable() {
                     <tr>
                         <th>文件</th>
                         <th>类型</th>
+                        <th>附件分类</th>
                         <th>所属公文</th>
                         <th>上传节点</th>
                         <th>上传人</th>
@@ -1406,10 +1421,14 @@ function renderAttachmentTable() {
                             <td>
                                 <div class="attachment-file-cell">
                                     <span class="attachment-file-icon">${att.fileIcon}</span>
-                                    <span class="attachment-file-name" title="${att.fileName}">${att.fileName}</span>
+                                    <div>
+                                        <div class="attachment-file-name" title="${escapeHtml(att.fileName)}">${escapeHtml(att.fileName)}</div>
+                                        ${att.remark ? `<div class="attachment-remark-text" title="${escapeHtml(att.remark)}">备注：${escapeHtml(att.remark)}</div>` : ''}
+                                    </div>
                                 </div>
                             </td>
                             <td><span class="file-type-badge file-type-${att.fileType}">${att.fileTypeLabel}</span></td>
+                            <td><span class="att-category-badge att-cat-${att.category}">${att.categoryLabel}</span></td>
                             <td class="td-ellipsis" title="${att.docTitle}">
                                 <div style="font-size:12px; color:#999; margin-bottom:2px;">${att.docId}</div>
                                 <div>${att.docTitle}</div>
@@ -1547,7 +1566,9 @@ function handleFileSelect(input, listId) {
         const attachment = {
             name: file.name,
             size: formatFileSize(file.size),
-            id: 'att_' + Date.now() + '_' + i
+            id: 'att_' + Date.now() + '_' + i,
+            category: ATTACHMENT_CATEGORIES.OTHER,
+            remark: ''
         };
 
         if (listId === 'regAttachmentsList') {
@@ -1576,13 +1597,49 @@ function renderAttachmentItems(attachments, listId) {
         return '';
     }
     return attachments.map(attachment => `
-        <div class="attachment-item">
-            <span class="attachment-icon">📄</span>
-            <span class="attachment-name">${escapeHtml(attachment.name)}</span>
-            <span class="attachment-size">${escapeHtml(attachment.size || '')}</span>
-            <a class="action-link" onclick="removeAttachment('${attachment.id}', '${listId}')">删除</a>
+        <div class="attachment-item attachment-item-editable">
+            <div class="attachment-item-main">
+                <span class="attachment-icon">${getFileIcon(attachment.name)}</span>
+                <span class="attachment-name" title="${escapeHtml(attachment.name)}">${escapeHtml(attachment.name)}</span>
+                <span class="attachment-size">${escapeHtml(attachment.size || '')}</span>
+                <a class="action-link" onclick="removeAttachment('${attachment.id}', '${listId}')">删除</a>
+            </div>
+            <div class="attachment-item-meta">
+                <label class="attachment-field">
+                    <span>附件分类</span>
+                    <select class="form-select attachment-category-select" onchange="updateAttachmentCategory('${attachment.id}', '${listId}', this.value)">
+                        ${Object.entries(ATTACHMENT_CATEGORY_LABELS).map(([key, label]) =>
+                            `<option value="${key}" ${(attachment.category || ATTACHMENT_CATEGORIES.OTHER) === key ? 'selected' : ''}>${label}</option>`
+                        ).join('')}
+                    </select>
+                </label>
+                <label class="attachment-field attachment-remark-field">
+                    <span>备注</span>
+                    <input type="text" class="form-input" maxlength="80" placeholder="填写简短备注"
+                           value="${escapeHtml(attachment.remark || '')}"
+                           oninput="updateAttachmentRemark('${attachment.id}', '${listId}', this.value)">
+                </label>
+            </div>
         </div>
     `).join('');
+}
+
+function updateAttachmentCategory(id, listId, category) {
+    if (listId === 'regAttachmentsList') {
+        const attachment = registerAttachments.find(a => a.id === id);
+        if (attachment) {
+            attachment.category = category || ATTACHMENT_CATEGORIES.OTHER;
+        }
+    }
+}
+
+function updateAttachmentRemark(id, listId, remark) {
+    if (listId === 'regAttachmentsList') {
+        const attachment = registerAttachments.find(a => a.id === id);
+        if (attachment) {
+            attachment.remark = remark.trim();
+        }
+    }
 }
 
 function getRegisterFormData() {
@@ -1995,11 +2052,15 @@ function renderDocDetail() {
                         <span class="detail-label">原文附件 <span style="color:#999; font-weight:normal;">（来自：${NODE_LABELS[FLOW_NODES.REGISTER]} · ${registerRecord.operatorName}）</span></span>
                         <div class="attachment-list">
                             ${registerRecord.attachments.map(a => `
-                                <div class="attachment-item">
-                                    <span class="attachment-icon">${getFileIcon(a.name)}</span>
-                                    <span class="attachment-name">${a.name}</span>
-                                    <span class="attachment-size">${a.size}</span>
-                                    <span class="file-type-badge file-type-${getFileType(a.name)}" style="margin-left:auto;">${getFileTypeLabel(a.name)}</span>
+                                <div class="attachment-item attachment-item-detail">
+                                    <div class="attachment-item-main">
+                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
+                                        <span class="attachment-name" title="${escapeHtml(a.name)}">${escapeHtml(a.name)}</span>
+                                        <span class="attachment-size">${escapeHtml(a.size || '')}</span>
+                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                        <span class="att-category-badge att-cat-${a.category || ATTACHMENT_CATEGORIES.OTHER}">${getAttachmentCategoryLabel(a.category)}</span>
+                                    </div>
+                                    ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
                                 </div>
                             `).join('')}
                         </div>
@@ -2130,11 +2191,15 @@ function renderTimeline(doc) {
                                     <span style="margin-left:8px; color:#aaa;">上传人：${record.operatorName}</span>
                                 </div>
                                 ${record.attachments.map(a => `
-                                    <div class="attachment-item timeline-attachment-item">
-                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
-                                        <span class="attachment-name">${a.name}</span>
-                                        <span class="attachment-size">${a.size}</span>
-                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                    <div class="attachment-item timeline-attachment-item timeline-attachment-item-extended">
+                                        <div class="attachment-item-main">
+                                            <span class="attachment-icon">${getFileIcon(a.name)}</span>
+                                            <span class="attachment-name" title="${escapeHtml(a.name)}">${escapeHtml(a.name)}</span>
+                                            <span class="attachment-size">${escapeHtml(a.size || '')}</span>
+                                            <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                            <span class="att-category-badge att-cat-${a.category || ATTACHMENT_CATEGORIES.OTHER}">${getAttachmentCategoryLabel(a.category)}</span>
+                                        </div>
+                                        ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
                                     </div>
                                 `).join('')}
                             </div>
@@ -2230,11 +2295,15 @@ function renderMultiHandleTimelineContent(doc, records) {
                                     <span style="margin-left:8px; color:#aaa;">上传人：${flowRecord.operatorName}</span>
                                 </div>
                                 ${flowRecord.attachments.map(a => `
-                                    <div class="attachment-item timeline-attachment-item">
-                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
-                                        <span class="attachment-name">${a.name}</span>
-                                        <span class="attachment-size">${a.size}</span>
-                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                    <div class="attachment-item timeline-attachment-item timeline-attachment-item-extended">
+                                        <div class="attachment-item-main">
+                                            <span class="attachment-icon">${getFileIcon(a.name)}</span>
+                                            <span class="attachment-name" title="${escapeHtml(a.name)}">${escapeHtml(a.name)}</span>
+                                            <span class="attachment-size">${escapeHtml(a.size || '')}</span>
+                                            <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                            <span class="att-category-badge att-cat-${a.category || ATTACHMENT_CATEGORIES.OTHER}">${getAttachmentCategoryLabel(a.category)}</span>
+                                        </div>
+                                        ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
                                     </div>
                                 `).join('')}
                             </div>

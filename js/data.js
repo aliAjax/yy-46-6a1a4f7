@@ -400,6 +400,24 @@ const FILE_TYPE_EXTENSIONS = {
     [FILE_TYPES.ZIP]: ['zip', 'rar', '7z', 'tar', 'gz']
 };
 
+const ATTACHMENT_CATEGORIES = {
+    MAIN: 'main',
+    INSTRUCTION: 'instruction',
+    REFERENCE: 'reference',
+    OTHER: 'other'
+};
+
+const ATTACHMENT_CATEGORY_LABELS = {
+    [ATTACHMENT_CATEGORIES.MAIN]: '正文',
+    [ATTACHMENT_CATEGORIES.INSTRUCTION]: '批示件',
+    [ATTACHMENT_CATEGORIES.REFERENCE]: '参考材料',
+    [ATTACHMENT_CATEGORIES.OTHER]: '其他'
+};
+
+function getAttachmentCategoryLabel(category) {
+    return ATTACHMENT_CATEGORY_LABELS[category] || ATTACHMENT_CATEGORY_LABELS[ATTACHMENT_CATEGORIES.OTHER];
+}
+
 function getFileType(fileName) {
     if (!fileName) return FILE_TYPES.OTHER;
     const ext = fileName.split('.').pop().toLowerCase();
@@ -445,6 +463,9 @@ function extractDocAttachments(doc) {
                     fileType: getFileType(att.name),
                     fileTypeLabel: getFileTypeLabel(att.name),
                     fileIcon: getFileIcon(att.name),
+                    category: att.category || ATTACHMENT_CATEGORIES.OTHER,
+                    categoryLabel: getAttachmentCategoryLabel(att.category),
+                    remark: att.remark || '',
                     node: record.node,
                     nodeLabel: NODE_LABELS[record.node] || record.node,
                     uploaderId: record.operatorId,
@@ -746,6 +767,18 @@ class DataStore {
                     if (!record.id) {
                         record.id = `rec_${doc.id}_${idx}_${record.node}`;
                         changed = true;
+                    }
+                    if (record.attachments && record.attachments.length > 0) {
+                        record.attachments.forEach(att => {
+                            if (att.category === undefined) {
+                                att.category = ATTACHMENT_CATEGORIES.OTHER;
+                                changed = true;
+                            }
+                            if (att.remark === undefined) {
+                                att.remark = '';
+                                changed = true;
+                            }
+                        });
                     }
                 });
             }
@@ -1741,6 +1774,10 @@ class DataStore {
 
         if (filters.fileType) {
             allAttachments = allAttachments.filter(a => a.fileType === filters.fileType);
+        }
+
+        if (filters.category) {
+            allAttachments = allAttachments.filter(a => a.category === filters.category);
         }
 
         if (filters.startDate) {
