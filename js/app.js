@@ -159,7 +159,7 @@ function navigateTo(page, params = {}) {
         clearDraftAutoSave();
         if (isDraftFormDirty && currentDraftId) {
             const formData = getRegisterFormData();
-            if (formData.title || formData.fromUnit || formData.content || (formData.attachments && formData.attachments.length > 0)) {
+            if (formData.title || formData.fromUnit || formData.docNumber || formData.deadline || formData.content || (formData.attachments && formData.attachments.length > 0)) {
                 dataStore.updateDraft(currentDraftId, formData, currentUser);
             }
         }
@@ -192,6 +192,7 @@ function navigateTo(page, params = {}) {
         case 'register':
             currentDraftId = null;
             renderRegisterForm();
+            showAutoDraftPromptIfNeeded();
             break;
         case 'draftEdit':
             currentDraftId = params.draftId || null;
@@ -1847,6 +1848,10 @@ function renderRegisterForm() {
                         <input type="date" class="form-input" id="regDocDate">
                     </div>
                     <div class="form-group">
+                        <label class="form-label">办理期限</label>
+                        <input type="date" class="form-input" id="regDeadline">
+                    </div>
+                    <div class="form-group">
                         <label class="form-label">紧急程度</label>
                         <select class="form-select" id="regPriority">
                             <option value="normal">普通</option>
@@ -1897,6 +1902,7 @@ function renderRegisterForm() {
         document.getElementById('regFromUnit').value = draft.fromUnit || '';
         document.getElementById('regDocNumber').value = draft.docNumber || '';
         document.getElementById('regDocDate').value = draft.docDate || '';
+        document.getElementById('regDeadline').value = draft.deadline || '';
         document.getElementById('regPriority').value = draft.priority || 'normal';
         document.getElementById('regCategory').value = draft.category || '';
         document.getElementById('regContent').value = draft.content || '';
@@ -1913,7 +1919,7 @@ function renderRegisterForm() {
 
 function setupDraftFormListeners() {
     const formInputs = [
-        'regTitle', 'regFromUnit', 'regDocNumber', 'regDocDate',
+        'regTitle', 'regFromUnit', 'regDocNumber', 'regDocDate', 'regDeadline',
         'regPriority', 'regCategory', 'regContent'
     ];
 
@@ -1953,8 +1959,11 @@ function autoSaveDraft() {
 
     const title = document.getElementById('regTitle')?.value.trim() || '';
     const fromUnit = document.getElementById('regFromUnit')?.value.trim() || '';
+    const docNumber = document.getElementById('regDocNumber')?.value.trim() || '';
+    const deadline = document.getElementById('regDeadline')?.value || '';
+    const content = document.getElementById('regContent')?.value.trim() || '';
 
-    if (!title && !fromUnit && registerAttachments.length === 0) {
+    if (!title && !fromUnit && !docNumber && !deadline && !content && registerAttachments.length === 0) {
         isDraftFormDirty = false;
         updateDraftSaveStatus('empty');
         return;
@@ -1995,8 +2004,11 @@ function saveDraftManually() {
     clearDraftAutoSave();
     const title = document.getElementById('regTitle')?.value.trim() || '';
     const fromUnit = document.getElementById('regFromUnit')?.value.trim() || '';
+    const docNumber = document.getElementById('regDocNumber')?.value.trim() || '';
+    const deadline = document.getElementById('regDeadline')?.value || '';
+    const content = document.getElementById('regContent')?.value.trim() || '';
 
-    if (!title && !fromUnit && registerAttachments.length === 0) {
+    if (!title && !fromUnit && !docNumber && !deadline && !content && registerAttachments.length === 0) {
         showToast('请至少填写一项内容后再保存草稿', 'warning');
         return;
     }
@@ -2080,6 +2092,69 @@ function updateDraftInfoBar() {
             header.after(bar);
         }
     }
+}
+
+function showAutoDraftPromptIfNeeded() {
+    if (currentRole !== ROLES.OFFICE || currentDraftId) return;
+
+    const drafts = dataStore.listDrafts({ userId: currentUser.id });
+    if (!drafts.length) return;
+
+    const draft = drafts[0];
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBody = document.getElementById('modalBody');
+    if (!modal || !modalTitle || !modalBody) return;
+
+    modalTitle.textContent = '发现未提交草稿';
+    modalBody.innerHTML = `
+        <div class="draft-detail-item">
+            <div class="draft-detail-label">最近保存</div>
+            <div class="draft-detail-value">${formatDateTime(draft.updatedAt)}</div>
+        </div>
+        <div class="draft-detail-item">
+            <div class="draft-detail-label">公文标题</div>
+            <div class="draft-detail-value">${escapeHtml(draft.title || '（无标题）')}</div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <div class="draft-detail-item">
+                <div class="draft-detail-label">来文单位</div>
+                <div class="draft-detail-value">${escapeHtml(draft.fromUnit || '-')}</div>
+            </div>
+            <div class="draft-detail-item">
+                <div class="draft-detail-label">办理期限</div>
+                <div class="draft-detail-value">${draft.deadline ? formatDate(draft.deadline) : '-'}</div>
+            </div>
+        </div>
+        <div style="text-align:right; margin-top:20px;">
+            <button class="btn btn-default" onclick="discardAutoDraft('${draft.id}')">放弃草稿</button>
+            <button class="btn btn-primary" onclick="continueAutoDraft('${draft.id}')">继续编辑</button>
+        </div>
+    `;
+    modal.classList.remove('hidden');
+}
+
+function continueAutoDraft(draftId) {
+    closeModal();
+    currentDraftId = draftId;
+    renderNav();
+    renderRegisterForm();
+}
+
+function discardAutoDraft(draftId) {
+    const success = dataStore.deleteDraft(draftId, currentUser);
+    if (!success) {
+        showToast('放弃草稿失败', 'error');
+        return;
+    }
+    closeModal();
+    currentDraftId = null;
+    isDraftFormDirty = false;
+    draftLastSavedAt = null;
+    registerAttachments = [];
+    renderNav();
+    renderRegisterForm();
+    showToast('已放弃自动草稿');
 }
 
 function saveDraft() {
@@ -2180,6 +2255,7 @@ function getRegisterFormData() {
         fromUnit: document.getElementById('regFromUnit').value.trim(),
         docNumber: document.getElementById('regDocNumber').value.trim(),
         docDate: document.getElementById('regDocDate').value,
+        deadline: document.getElementById('regDeadline').value,
         priority: document.getElementById('regPriority').value,
         category: document.getElementById('regCategory').value,
         content: document.getElementById('regContent').value.trim(),
@@ -2366,7 +2442,10 @@ function renderDraftTable() {
                     <th style="width:15%; cursor:pointer;" onclick="sortDrafts('fromUnit')">
                         来文单位 ${getSortIcon('fromUnit', sortField, sortOrder)}
                     </th>
-                    <th style="width:10%;">紧急程度</th>
+                    <th style="width:9%;">紧急程度</th>
+                    <th style="width:10%; cursor:pointer;" onclick="sortDrafts('deadline')">
+                        办理期限 ${getSortIcon('deadline', sortField, sortOrder)}
+                    </th>
                     <th style="width:8%;">附件数</th>
                     <th style="width:12%; cursor:pointer;" onclick="sortDrafts('createdAt')">
                         创建时间 ${getSortIcon('createdAt', sortField, sortOrder)}
@@ -2392,6 +2471,7 @@ function renderDraftTable() {
                             </td>
                             <td>${draft.fromUnit || '-'}</td>
                             <td>${getPriorityLabel(draft.priority)}</td>
+                            <td>${draft.deadline ? formatDate(draft.deadline) : '-'}</td>
                             <td>${attachmentCount} 个</td>
                             <td>${formatDateTime(draft.createdAt)}</td>
                             <td>${formatDateTime(draft.updatedAt)}</td>
@@ -2484,6 +2564,10 @@ function viewDraftDetail(draftId) {
                     <div class="draft-detail-item">
                         <div class="draft-detail-label">来文日期</div>
                         <div class="draft-detail-value">${draft.docDate || '-'}</div>
+                    </div>
+                    <div class="draft-detail-item">
+                        <div class="draft-detail-label">办理期限</div>
+                        <div class="draft-detail-value">${draft.deadline ? formatDate(draft.deadline) : '-'}</div>
                     </div>
                 </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">

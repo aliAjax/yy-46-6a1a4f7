@@ -824,6 +824,10 @@ class DataStore {
                 draft.content = '';
                 changed = true;
             }
+            if (draft.deadline === undefined) {
+                draft.deadline = '';
+                changed = true;
+            }
             if (draft.createdBy === undefined && draft.creatorId) {
                 draft.createdBy = draft.creatorId;
                 changed = true;
@@ -891,7 +895,7 @@ class DataStore {
             assignedUserName: null,
             isMultiDept: false,
             handleRecords: [],
-            deadline: null,
+            deadline: docData.deadline || null,
             archived: false,
             createdAt: now,
             createdBy: creator.id,
@@ -1119,7 +1123,9 @@ class DataStore {
         doc.assignedUser = mainUserId;
         doc.assignedUserName = mainUserName;
         doc.isMultiDept = isMulti;
-        doc.deadline = calculateDeadline(doc.priority, now);
+        if (!doc.deadline) {
+            doc.deadline = calculateDeadline(doc.priority, now);
+        }
 
         doc.handleRecords = [];
 
@@ -2041,6 +2047,7 @@ class DataStore {
             priority: draftData.priority || 'normal',
             category: draftData.category || '',
             content: draftData.content || '',
+            deadline: draftData.deadline || '',
             attachments: draftData.attachments || [],
             createdBy: creator.id,
             createdByName: creator.name,
@@ -2065,6 +2072,7 @@ class DataStore {
         if (draftData.priority !== undefined) draft.priority = draftData.priority;
         if (draftData.category !== undefined) draft.category = draftData.category;
         if (draftData.content !== undefined) draft.content = draftData.content;
+        if (draftData.deadline !== undefined) draft.deadline = draftData.deadline;
         if (draftData.attachments !== undefined) draft.attachments = draftData.attachments;
         draft.updatedAt = now;
 
@@ -2135,6 +2143,10 @@ class DataStore {
                     valA = new Date(a.createdAt).getTime();
                     valB = new Date(b.createdAt).getTime();
                     break;
+                case 'deadline':
+                    valA = a.deadline ? new Date(a.deadline).getTime() : 0;
+                    valB = b.deadline ? new Date(b.deadline).getTime() : 0;
+                    break;
                 case 'updatedAt':
                 default:
                     valA = new Date(a.updatedAt).getTime();
@@ -2192,6 +2204,7 @@ class DataStore {
             priority: draft.priority || 'normal',
             category: draft.category || '',
             content: draft.content || '',
+            deadline: draft.deadline || '',
             attachments: draft.attachments || []
         };
 
