@@ -2674,9 +2674,33 @@ class TemplateStore {
         if (data) {
             try {
                 this.templates = JSON.parse(data);
+                this.migrateTemplates();
             } catch (e) {
                 this.templates = {};
             }
+        }
+    }
+
+    migrateTemplates() {
+        let changed = false;
+        Object.values(this.templates).forEach(userTemplates => {
+            userTemplates.forEach(template => {
+                if (template.pinned === undefined) {
+                    template.pinned = false;
+                    changed = true;
+                }
+                if (template.lastUsedAt === undefined) {
+                    template.lastUsedAt = 0;
+                    changed = true;
+                }
+                if (template.updatedAt === undefined) {
+                    template.updatedAt = template.createdAt || Date.now();
+                    changed = true;
+                }
+            });
+        });
+        if (changed) {
+            this.save();
         }
     }
 
@@ -2686,12 +2710,23 @@ class TemplateStore {
 
     getUserTemplates(userId, type = null) {
         const userTemplates = this.templates[userId] || [];
+        const sortTemplates = templates => templates
+            .slice()
+            .sort((a, b) => {
+                if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+                return (b.lastUsedAt || 0) - (a.lastUsedAt || 0) ||
+                    (b.updatedAt || 0) - (a.updatedAt || 0) ||
+                    (b.createdAt || 0) - (a.createdAt || 0);
+            });
         if (type) {
-            return userTemplates
-                .filter(t => t.type === type)
-                .sort((a, b) => b.useCount - a.useCount || b.createdAt - a.createdAt);
+            return sortTemplates(userTemplates.filter(t => t.type === type));
         }
-        return userTemplates.sort((a, b) => b.useCount - a.useCount || b.createdAt - a.createdAt);
+        return sortTemplates(userTemplates);
+    }
+
+    getTemplate(userId, templateId) {
+        if (!this.templates[userId]) return null;
+        return this.templates[userId].find(t => t.id === templateId) || null;
     }
 
     addTemplate(userId, templateData) {
@@ -2704,9 +2739,32 @@ class TemplateStore {
             content: templateData.content,
             type: templateData.type,
             useCount: 0,
-            createdAt: Date.now()
+            pinned: false,
+            lastUsedAt: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
         };
         this.templates[userId].push(template);
+        this.save();
+        return template;
+    }
+
+    updateTemplate(userId, templateId, templateData) {
+        const template = this.getTemplate(userId, templateId);
+        if (!template) return null;
+        template.title = templateData.title;
+        template.content = templateData.content;
+        template.type = templateData.type;
+        template.updatedAt = Date.now();
+        this.save();
+        return template;
+    }
+
+    toggleTemplatePin(userId, templateId) {
+        const template = this.getTemplate(userId, templateId);
+        if (!template) return null;
+        template.pinned = !template.pinned;
+        template.updatedAt = Date.now();
         this.save();
         return template;
     }
@@ -2725,6 +2783,7 @@ class TemplateStore {
         const template = this.templates[userId].find(t => t.id === templateId);
         if (!template) return null;
         template.useCount = (template.useCount || 0) + 1;
+        template.lastUsedAt = Date.now();
         this.save();
         return template;
     }

@@ -3984,7 +3984,7 @@ function renderTemplateList() {
                         </select>
                     </div>
                     <div class="template-tip">
-                        <span style="color:#888; font-size:13px;">共 ${templates.length} 个模板，按使用频率排序</span>
+                        <span style="color:#888; font-size:13px;">共 ${templates.length} 个模板，置顶优先，按最近使用排序</span>
                     </div>
                 </div>
             </div>
@@ -3999,10 +3999,14 @@ function renderTemplateList() {
                                 <div class="template-item-header">
                                     <div class="template-item-title">
                                         <span class="template-type-tag ${tpl.type}">${TEMPLATE_TYPE_LABELS[tpl.type]}</span>
+                                        ${tpl.pinned ? '<span class="template-pin-badge">置顶</span>' : ''}
                                         <span class="template-title-text">${escapeHtml(tpl.title)}</span>
                                     </div>
                                     <div class="template-item-actions">
-                                        <span class="template-use-count">使用 ${tpl.useCount} 次</span>
+                                        <span class="template-use-count">使用 ${tpl.useCount || 0} 次</span>
+                                        <span class="template-last-used">${formatTemplateLastUsed(tpl.lastUsedAt)}</span>
+                                        <a class="action-link" onclick="toggleTemplatePin('${tpl.id}')">${tpl.pinned ? '取消置顶' : '置顶'}</a>
+                                        <a class="action-link" onclick="showEditTemplateModal('${tpl.id}')">编辑</a>
                                         <a class="action-link" onclick="deleteTemplate('${tpl.id}')">删除</a>
                                     </div>
                                 </div>
@@ -4051,6 +4055,42 @@ function showAddTemplateModal() {
     document.getElementById('modal').classList.remove('hidden');
 }
 
+function showEditTemplateModal(templateId) {
+    const template = templateStore.getTemplate(currentUser.id, templateId);
+    if (!template) {
+        showToast('模板不存在', 'error');
+        return;
+    }
+
+    let typeOptions = [];
+    Object.keys(TEMPLATE_TYPE_LABELS).forEach(key => {
+        typeOptions.push({ value: key, label: TEMPLATE_TYPE_LABELS[key] });
+    });
+
+    document.getElementById('modalTitle').textContent = '编辑常用模板';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>模板类型</label>
+            <select class="form-select" id="editTemplateType">
+                ${typeOptions.map(o => `<option value="${o.value}" ${template.type === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>模板标题</label>
+            <input type="text" class="form-input" id="editTemplateTitle" value="${escapeHtml(template.title)}" placeholder="给模板起个简短的名字">
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>模板内容</label>
+            <textarea class="form-textarea" id="editTemplateContent" rows="6" placeholder="请输入常用的意见内容...">${escapeHtml(template.content)}</textarea>
+        </div>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="updateTemplate('${template.id}')">保存修改</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
 function addTemplate() {
     const type = document.getElementById('newTemplateType').value;
     const title = document.getElementById('newTemplateTitle').value.trim();
@@ -4069,6 +4109,40 @@ function addTemplate() {
     closeModal();
     showToast('模板添加成功！');
     renderTemplateList();
+}
+
+function updateTemplate(templateId) {
+    const type = document.getElementById('editTemplateType').value;
+    const title = document.getElementById('editTemplateTitle').value.trim();
+    const content = document.getElementById('editTemplateContent').value.trim();
+
+    if (!title) {
+        showToast('请输入模板标题', 'error');
+        return;
+    }
+    if (!content) {
+        showToast('请输入模板内容', 'error');
+        return;
+    }
+
+    const result = templateStore.updateTemplate(currentUser.id, templateId, { type, title, content });
+    if (result) {
+        closeModal();
+        showToast('模板已更新');
+        renderTemplateList();
+    } else {
+        showToast('更新失败', 'error');
+    }
+}
+
+function toggleTemplatePin(templateId) {
+    const template = templateStore.toggleTemplatePin(currentUser.id, templateId);
+    if (template) {
+        showToast(template.pinned ? '模板已置顶' : '已取消置顶');
+        renderTemplateList();
+    } else {
+        showToast('操作失败', 'error');
+    }
 }
 
 function deleteTemplate(templateId) {
@@ -4098,7 +4172,8 @@ function renderTemplateSelector(type) {
             </div>
             <div class="template-selector-list">
                 ${templates.slice(0, 5).map(tpl => `
-                    <button type="button" class="template-chip" onclick="insertTemplateContent('${tpl.id}')" title="${escapeHtml(tpl.content)}">
+                    <button type="button" class="template-chip ${tpl.pinned ? 'pinned' : ''}" onclick="insertTemplateContent('${tpl.id}')" title="${escapeHtml(tpl.content)}">
+                        ${tpl.pinned ? '<span class="template-chip-pin">置顶</span>' : ''}
                         ${escapeHtml(tpl.title)}
                     </button>
                 `).join('')}
@@ -4126,6 +4201,11 @@ function insertTemplateContent(templateId) {
     textarea.setSelectionRange(newPos, newPos);
 
     showToast('已插入模板');
+}
+
+function formatTemplateLastUsed(lastUsedAt) {
+    if (!lastUsedAt) return '最近未使用';
+    return '最近使用 ' + formatDateTime(lastUsedAt);
 }
 
 function escapeHtml(text) {

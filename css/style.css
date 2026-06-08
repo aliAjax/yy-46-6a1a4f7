@@ -1046,6 +1046,7 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
 .template-title-text {
@@ -1058,11 +1059,28 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .template-use-count {
     font-size: 12px;
     color: #999;
+}
+
+.template-last-used {
+    font-size: 12px;
+    color: #999;
+}
+
+.template-pin-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #fff1f0;
+    color: #c41e3a;
+    font-size: 12px;
+    font-weight: 500;
 }
 
 .template-item-content {
@@ -1136,6 +1154,7 @@ body {
 .template-chip {
     display: inline-flex;
     align-items: center;
+    gap: 6px;
     padding: 6px 14px;
     background: white;
     border: 1px solid #d9d9d9;
@@ -1151,6 +1170,21 @@ body {
     border-color: #c41e3a;
     color: #c41e3a;
     background: #fff5f5;
+}
+
+.template-chip.pinned {
+    border-color: #ffa39e;
+    background: #fff1f0;
+    color: #a8071a;
+}
+
+.template-chip-pin {
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 3px;
+    background: #c41e3a;
+    color: white;
 }
 
 .template-chip:active {
