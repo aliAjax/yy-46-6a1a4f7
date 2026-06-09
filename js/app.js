@@ -157,10 +157,18 @@ function renderNav() {
 function navigateTo(page, params = {}) {
     if ((currentPage === 'register' || currentPage === 'draftEdit') && (page !== 'register' && page !== 'draftEdit')) {
         clearDraftAutoSave();
-        if (isDraftFormDirty && currentDraftId) {
+        if (isDraftFormDirty) {
             const formData = getRegisterFormData();
-            if (formData.title || formData.fromUnit || formData.content || (formData.attachments && formData.attachments.length > 0)) {
-                dataStore.updateDraft(currentDraftId, formData, currentUser);
+            const hasContent = formData.title || formData.fromUnit || formData.content ||
+                              (formData.attachments && formData.attachments.length > 0) ||
+                              formData.docNumber || formData.docDate;
+            if (hasContent) {
+                if (currentDraftId) {
+                    dataStore.updateDraft(currentDraftId, formData, currentUser);
+                } else {
+                    const draft = dataStore.createDraft(formData, currentUser);
+                    currentDraftId = draft.id;
+                }
             }
         }
         isDraftFormDirty = false;
@@ -346,18 +354,36 @@ function renderDashboard() {
                                 </tr>
                             </thead>
                             <tbody>
-                                ${warningDocs.map(doc => `
+                                ${warningDocs.map(doc => {
+                                    const extCount = getExtensionCount(doc);
+                                    const pendingExt = getPendingExtension(doc);
+                                    const effectiveDeadline = getEffectiveDeadline(doc);
+                                    const hasExt = extCount > 0;
+                                    
+                                    const remainingHtml = hasExt 
+                                        ? `<div style="color: #1890ff; font-weight: 500;">${renderRemainingTime(doc)}</div>
+                                           <div style="font-size: 11px; color: #999; margin-top: 2px;">已延期${extCount}次</div>`
+                                        : renderRemainingTime(doc);
+                                    
+                                    const warningBadgeHtml = pendingExt
+                                        ? `<div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                                             <span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>
+                                             <span class="ext-status-badge status-pending" style="font-size: 11px;">待审批</span>
+                                           </div>`
+                                        : `<span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>`;
+                                    
+                                    return `
                                     <tr>
                                         <td>${doc.id}</td>
                                         <td class="td-ellipsis" title="${doc.title}">${doc.title}</td>
                                         <td>${getPriorityLabel(doc.priority)}</td>
                                         <td>${doc.assignedDept || '-'}</td>
                                         <td>${doc.assignedUserName || '-'}</td>
-                                        <td>${renderRemainingTime(doc)}</td>
-                                        <td><span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span></td>
+                                        <td>${remainingHtml}</td>
+                                        <td>${warningBadgeHtml}</td>
                                         <td><a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">查看</a></td>
                                     </tr>
-                                `).join('')}
+                                `}).join('')}
                             </tbody>
                         </table>
                     </div>
@@ -962,6 +988,27 @@ function renderDocTable() {
                         const modeBadge = doc.isMultiDept
                             ? '<span class="badge-multi">多科室协办</span>'
                             : '<span class="badge-single">单科室承办</span>';
+                        
+                        const extCount = getExtensionCount(doc);
+                        const pendingExt = getPendingExtension(doc);
+                        const hasExt = extCount > 0;
+                        
+                        const remainingHtml = doc.deadline
+                            ? (hasExt 
+                                ? `<div style="color: #1890ff; font-weight: 500;">${renderRemainingTime(doc)}</div>
+                                   <div style="font-size: 11px; color: #999; margin-top: 2px;">已延期${extCount}次</div>`
+                                : renderRemainingTime(doc))
+                            : '-';
+                        
+                        const warningBadgeHtml = doc.deadline
+                            ? (pendingExt
+                                ? `<div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                                     <span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>
+                                     <span class="ext-status-badge status-pending" style="font-size: 11px;">待审批</span>
+                                   </div>`
+                                : `<span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>`)
+                            : '-';
+                        
                         return `
                         <tr>
                             <td>${doc.id}</td>
@@ -970,8 +1017,8 @@ function renderDocTable() {
                             <td>${getPriorityLabel(doc.priority)}</td>
                             <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
                             <td>${modeBadge}</td>
-                            <td>${renderRemainingTime(doc)}</td>
-                            <td>${doc.deadline ? `<span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>` : '-'}</td>
+                            <td>${remainingHtml}</td>
+                            <td>${warningBadgeHtml}</td>
                             ${currentRole === ROLES.STAFF ? `<td>${myRole || '-'}</td>` : ''}
                             <td>${formatDate(doc.createdAt)}</td>
                             <td>
@@ -1338,6 +1385,7 @@ function renderArchiveTable() {
 function renderSupervisionCenter() {
     const content = document.getElementById('contentArea');
     const supStats = dataStore.getSupervisionStats(currentRole, currentUser);
+    const extStats = dataStore.getExtensionStats(currentRole, currentUser);
 
     const warningOptions = [
         { value: '', label: '全部预警状态' },
@@ -1357,6 +1405,16 @@ function renderSupervisionCenter() {
     userStore.getUsersByRole(ROLES.STAFF).forEach(s => {
         staffOptions.push({ value: s.id, label: `${s.name}（${s.dept}）` });
     });
+
+    const extPendingStatsHtml = (currentRole === ROLES.LEADER || currentRole === ROLES.OFFICE) ? `
+        <div class="stat-card warning-card-extension">
+            <div class="stat-icon purple">⏳</div>
+            <div class="stat-info">
+                <div class="stat-number">${extStats.pending}</div>
+                <div class="stat-label">待审批延期</div>
+            </div>
+        </div>
+    ` : '';
 
     content.innerHTML = `
         <div class="page-header">
@@ -1386,6 +1444,7 @@ function renderSupervisionCenter() {
                     <div class="stat-label">超期督办</div>
                 </div>
             </div>
+            ${extPendingStatsHtml}
         </div>
 
         <div class="card">
@@ -1488,12 +1547,34 @@ function renderSupervisionTable() {
                         <th>办理期限</th>
                         <th>剩余时间</th>
                         <th>预警状态</th>
+                        <th>延期状态</th>
                         <th>督办次数</th>
                         <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${docs.map(doc => `
+                    ${docs.map(doc => {
+                        const pendingExt = getPendingExtension(doc);
+                        const extCount = getExtensionCount(doc);
+                        const effectiveDeadline = getEffectiveDeadline(doc);
+                        
+                        let extStatusHtml = '-';
+                        if (pendingExt) {
+                            extStatusHtml = '<span class="ext-status-badge status-pending">待审批</span>';
+                        } else if (extCount > 0) {
+                            extStatusHtml = `<span class="ext-status-badge status-approved">已延期 ${extCount} 次</span>`;
+                        }
+                        
+                        const deadlineDisplay = effectiveDeadline 
+                            ? (extCount > 0 
+                                ? `<span style="color: #1890ff;">${formatDate(effectiveDeadline)}</span>` 
+                                : formatDate(effectiveDeadline))
+                            : '-';
+                        
+                        const canApproveExt = dataStore.canApproveExtension(doc, currentRole, currentUser);
+                        const canRequestExt = dataStore.canRequestExtension(doc, currentRole, currentUser);
+                        
+                        return `
                         <tr class="${getWarningStatusClass(doc) ? 'row-' + getWarningStatusClass(doc) : ''}">
                             <td>${doc.id}</td>
                             <td class="td-ellipsis" title="${doc.title}">${doc.title}</td>
@@ -1501,9 +1582,10 @@ function renderSupervisionTable() {
                             <td>${doc.assignedDept || '-'}</td>
                             <td>${doc.assignedUserName || '-'}</td>
                             <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
-                            <td>${doc.deadline ? formatDate(doc.deadline) : '-'}</td>
+                            <td>${deadlineDisplay}</td>
                             <td>${renderRemainingTime(doc)}</td>
                             <td>${doc.deadline ? `<span class="warning-badge ${getWarningStatusClass(doc)}">${getWarningStatusLabel(doc)}</span>` : '-'}</td>
+                            <td>${extStatusHtml}</td>
                             <td>
                                 ${doc.supervisionRecords && doc.supervisionRecords.length > 0
                                     ? `<span class="sup-count">${doc.supervisionRecords.length}</span>`
@@ -1515,10 +1597,16 @@ function renderSupervisionTable() {
                                     ${dataStore.canSupervise(doc, currentRole, currentUser)
                                         ? `<a class="action-link action-supervise" onclick="quickSupervise('${doc.id}')">督办</a>`
                                         : ''}
+                                    ${canApproveExt
+                                        ? `<a class="action-link action-extension" onclick="quickApproveExtension('${doc.id}')">审批延期</a>`
+                                        : ''}
+                                    ${canRequestExt
+                                        ? `<a class="action-link action-ext-request" onclick="quickRequestExtension('${doc.id}')">申请延期</a>`
+                                        : ''}
                                 </div>
                             </td>
                         </tr>
-                    `).join('')}
+                    `}).join('')}
                 </tbody>
             </table>
         </div>
@@ -1528,6 +1616,16 @@ function renderSupervisionTable() {
 function quickSupervise(docId) {
     currentDocId = docId;
     showSuperviseModal();
+}
+
+function quickRequestExtension(docId) {
+    currentDocId = docId;
+    showExtensionRequestModal();
+}
+
+function quickApproveExtension(docId) {
+    currentDocId = docId;
+    showExtensionApproveModal();
 }
 
 function renderAttachmentCenter() {
@@ -1797,6 +1895,109 @@ function renderRegisterForm() {
 
     const content = document.getElementById('contentArea');
     const isEditDraft = !!currentDraftId;
+
+    if (!isEditDraft) {
+        const userDrafts = dataStore.listDrafts({ userId: currentUser.id });
+        if (userDrafts && userDrafts.length > 0) {
+            showDraftRecoveryModal(userDrafts);
+            return;
+        }
+    }
+
+    renderRegisterFormContent();
+}
+
+function showDraftRecoveryModal(drafts) {
+    const content = document.getElementById('contentArea');
+    const latestDraft = drafts[0];
+    const draftCount = drafts.length;
+
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBody = document.getElementById('modalBody');
+
+    modalTitle.textContent = '发现未完成的登记草稿';
+    modalBody.innerHTML = `
+        <div style="padding: 10px 0;">
+            <div class="draft-recovery-icon" style="text-align:center; font-size:48px; margin-bottom:16px;">📝</div>
+            <p style="text-align:center; margin-bottom:16px; font-size:15px;">
+                您有 <strong style="color:#1890ff;">${draftCount}</strong> 篇未提交的登记草稿
+            </p>
+            <div class="draft-recovery-latest" style="background:#f5f5f5; padding:12px 16px; border-radius:6px; margin-bottom:20px;">
+                <div style="font-weight:500; margin-bottom:6px; color:#333;">
+                    最近一篇：${escapeHtml(latestDraft.title || '（无标题）')}
+                </div>
+                <div style="font-size:13px; color:#888;">
+                    来文单位：${escapeHtml(latestDraft.fromUnit || '（未填写）')}
+                </div>
+                <div style="font-size:13px; color:#888;">
+                    最后保存：${formatDateTime(latestDraft.updatedAt)}
+                </div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <button class="btn btn-primary btn-block" onclick="continueLatestDraft('${latestDraft.id}')">
+                    ✏️ 继续编辑最新草稿
+                </button>
+                <button class="btn btn-default btn-block" onclick="closeModal(); navigateTo('drafts');">
+                    📁 查看所有草稿
+                </button>
+                <button class="btn btn-default btn-block" onclick="keepDraftsAndNew()">
+                    🆕 保留草稿，新建登记
+                </button>
+                <button class="btn btn-default btn-block btn-danger" onclick="discardAllDraftsAndNew()" style="color:#f5222d; border-color:#ffa39e;">
+                    🗑️ 放弃所有草稿，新建登记
+                </button>
+            </div>
+        </div>
+    `;
+
+    modal.classList.remove('hidden');
+    content.innerHTML = '<div class="empty-state"><div class="empty-icon">📝</div><p>请选择如何处理草稿...</p></div>';
+
+    window._draftRecoveryModalActive = true;
+    window._draftRecoveryDrafts = drafts;
+}
+
+function keepDraftsAndNew() {
+    window._draftRecoveryModalActive = false;
+    closeModal();
+    currentDraftId = null;
+    renderRegisterFormContent();
+}
+
+function _handleDraftRecoveryModalClose() {
+    if (window._draftRecoveryModalActive) {
+        window._draftRecoveryModalActive = false;
+        currentDraftId = null;
+        renderRegisterFormContent();
+    }
+}
+
+function continueLatestDraft(draftId) {
+    window._draftRecoveryModalActive = false;
+    closeModal();
+    currentDraftId = draftId;
+    renderRegisterFormContent();
+}
+
+function discardAllDraftsAndNew() {
+    if (!confirm('确定要放弃所有草稿并开始新的登记吗？\n\n放弃后所有草稿将被删除，无法恢复。')) {
+        return;
+    }
+    const userDrafts = dataStore.listDrafts({ userId: currentUser.id });
+    userDrafts.forEach(draft => {
+        dataStore.deleteDraft(draft.id, currentUser);
+    });
+    window._draftRecoveryModalActive = false;
+    closeModal();
+    currentDraftId = null;
+    renderRegisterFormContent();
+    showToast('已清空所有草稿', 'success');
+}
+
+function renderRegisterFormContent() {
+    const content = document.getElementById('contentArea');
+    const isEditDraft = !!currentDraftId;
     let draft = null;
     let pageTitle = '收文登记';
     let backButton = "navigateTo('list')";
@@ -1825,7 +2026,14 @@ function renderRegisterForm() {
             </div>
         </div>
 
-        ${isEditDraft ? `<div class="draft-info-bar"><span class="draft-icon">📝</span><span id="draftLastSavedText">草稿最后保存时间：${formatDateTime(draft.updatedAt)}</span></div>` : ''}
+        ${isEditDraft ? `
+            <div class="draft-info-bar">
+                <span class="draft-icon">📝</span>
+                <span id="draftLastSavedText">草稿最后保存时间：${formatDateTime(draft.updatedAt)}</span>
+                <span style="flex:1;"></span>
+                <a class="draft-discard-link" onclick="discardCurrentDraft()">放弃草稿</a>
+            </div>
+        ` : ''}
 
         <div class="card">
             <div class="card-body">
@@ -1868,6 +2076,10 @@ function renderRegisterForm() {
                             <option value="其他">其他</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">办理期限</label>
+                        <input type="date" class="form-input" id="regDeadline">
+                    </div>
                     <div class="form-group full-width">
                         <label class="form-label">公文内容摘要</label>
                         <textarea class="form-textarea" id="regContent" rows="4" placeholder="请输入公文内容摘要"></textarea>
@@ -1899,6 +2111,7 @@ function renderRegisterForm() {
         document.getElementById('regDocDate').value = draft.docDate || '';
         document.getElementById('regPriority').value = draft.priority || 'normal';
         document.getElementById('regCategory').value = draft.category || '';
+        document.getElementById('regDeadline').value = draft.deadline ? draft.deadline.split('T')[0] : '';
         document.getElementById('regContent').value = draft.content || '';
 
         registerAttachments = [...(draft.attachments || [])];
@@ -1914,7 +2127,7 @@ function renderRegisterForm() {
 function setupDraftFormListeners() {
     const formInputs = [
         'regTitle', 'regFromUnit', 'regDocNumber', 'regDocDate',
-        'regPriority', 'regCategory', 'regContent'
+        'regPriority', 'regCategory', 'regDeadline', 'regContent'
     ];
 
     formInputs.forEach(id => {
@@ -2076,10 +2289,49 @@ function updateDraftInfoBar() {
         if (header) {
             const bar = document.createElement('div');
             bar.className = 'draft-info-bar';
-            bar.innerHTML = `<span class="draft-icon">📝</span><span id="draftLastSavedText">草稿最后保存时间：${formatDateTime(draftLastSavedAt)}</span>`;
+            bar.innerHTML = `
+                <span class="draft-icon">📝</span>
+                <span id="draftLastSavedText">草稿已自动保存 · ${formatDateTime(draftLastSavedAt)}</span>
+                <span style="flex:1;"></span>
+                <a class="draft-discard-link" onclick="discardCurrentDraft()">放弃草稿</a>
+            `;
             header.after(bar);
         }
+    } else if (infoBar && draftLastSavedAt) {
+        updateDraftLastSavedText(draftLastSavedAt);
     }
+}
+
+function discardCurrentDraft() {
+    if (!currentDraftId) return;
+    if (!confirm('确定要放弃这篇草稿吗？\n\n放弃后将清空当前表单内容，草稿也会被删除。')) {
+        return;
+    }
+    dataStore.deleteDraft(currentDraftId, currentUser);
+    currentDraftId = null;
+    draftLastSavedAt = null;
+    isDraftFormDirty = false;
+    clearDraftAutoSave();
+
+    document.getElementById('regTitle').value = '';
+    document.getElementById('regFromUnit').value = '';
+    document.getElementById('regDocNumber').value = '';
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('regDocDate').value = today;
+    document.getElementById('regPriority').value = 'normal';
+    document.getElementById('regCategory').value = '';
+    document.getElementById('regDeadline').value = '';
+    document.getElementById('regContent').value = '';
+    registerAttachments = [];
+    renderAttachmentList('regAttachmentsList', registerAttachments);
+
+    const infoBar = document.querySelector('.draft-info-bar');
+    if (infoBar) {
+        infoBar.remove();
+    }
+    updateDraftSaveStatus('empty');
+
+    showToast('草稿已放弃');
 }
 
 function saveDraft() {
@@ -2175,6 +2427,7 @@ function updateAttachmentRemark(attId, listId, remark) {
 }
 
 function getRegisterFormData() {
+    const deadlineValue = document.getElementById('regDeadline').value;
     return {
         title: document.getElementById('regTitle').value.trim(),
         fromUnit: document.getElementById('regFromUnit').value.trim(),
@@ -2182,6 +2435,7 @@ function getRegisterFormData() {
         docDate: document.getElementById('regDocDate').value,
         priority: document.getElementById('regPriority').value,
         category: document.getElementById('regCategory').value,
+        deadline: deadlineValue ? new Date(deadlineValue).toISOString() : null,
         content: document.getElementById('regContent').value.trim(),
         attachments: [...registerAttachments]
     };
@@ -2360,15 +2614,18 @@ function renderDraftTable() {
         <table class="data-table">
             <thead>
                 <tr>
-                    <th style="width:35%; cursor:pointer;" onclick="sortDrafts('title')">
+                    <th style="width:28%; cursor:pointer;" onclick="sortDrafts('title')">
                         公文标题 ${getSortIcon('title', sortField, sortOrder)}
                     </th>
-                    <th style="width:15%; cursor:pointer;" onclick="sortDrafts('fromUnit')">
+                    <th style="width:12%; cursor:pointer;" onclick="sortDrafts('fromUnit')">
                         来文单位 ${getSortIcon('fromUnit', sortField, sortOrder)}
                     </th>
-                    <th style="width:10%;">紧急程度</th>
-                    <th style="width:8%;">附件数</th>
-                    <th style="width:12%; cursor:pointer;" onclick="sortDrafts('createdAt')">
+                    <th style="width:8%;">紧急程度</th>
+                    <th style="width:10%; cursor:pointer;" onclick="sortDrafts('deadline')">
+                        办理期限 ${getSortIcon('deadline', sortField, sortOrder)}
+                    </th>
+                    <th style="width:6%;">附件数</th>
+                    <th style="width:10%; cursor:pointer;" onclick="sortDrafts('createdAt')">
                         创建时间 ${getSortIcon('createdAt', sortField, sortOrder)}
                     </th>
                     <th style="width:10%; cursor:pointer;" onclick="sortDrafts('updatedAt')">
@@ -2392,6 +2649,7 @@ function renderDraftTable() {
                             </td>
                             <td>${draft.fromUnit || '-'}</td>
                             <td>${getPriorityLabel(draft.priority)}</td>
+                            <td>${draft.deadline ? formatDate(draft.deadline) : '-'}</td>
                             <td>${attachmentCount} 个</td>
                             <td>${formatDateTime(draft.createdAt)}</td>
                             <td>${formatDateTime(draft.updatedAt)}</td>
@@ -2495,6 +2753,10 @@ function viewDraftDetail(draftId) {
                         <div class="draft-detail-label">公文类别</div>
                         <div class="draft-detail-value">${draft.category || '-'}</div>
                     </div>
+                </div>
+                <div class="draft-detail-item">
+                    <div class="draft-detail-label">办理期限</div>
+                    <div class="draft-detail-value">${draft.deadline ? formatDate(draft.deadline) : '（未设置）'}</div>
                 </div>
                 <div class="draft-detail-item">
                     <div class="draft-detail-label">内容摘要</div>
@@ -2625,6 +2887,8 @@ function renderDocDetail() {
     const canSupervise = dataStore.canSupervise(doc, currentRole, currentUser) && !isArchiveDetail;
     const canReturn = dataStore.canReturn(doc, currentRole, currentUser) && !isArchiveDetail;
     const canResubmit = dataStore.canResubmit(doc, currentRole, currentUser) && !isArchiveDetail;
+    const canRequestExtension = dataStore.canRequestExtension(doc, currentRole, currentUser) && !isArchiveDetail;
+    const canApproveExtension = dataStore.canApproveExtension(doc, currentRole, currentUser) && !isArchiveDetail;
     const content = document.getElementById('contentArea');
 
     let actionButton = '';
@@ -2675,6 +2939,16 @@ function renderDocDetail() {
         superviseButton = `<button class="btn btn-warning" onclick="showSuperviseModal()">📢 督办</button>`;
     }
 
+    let extensionButton = '';
+    if (canRequestExtension) {
+        extensionButton = `<button class="btn btn-outline" onclick="showExtensionRequestModal()">📅 申请延期</button>`;
+    }
+
+    let extensionApproveButton = '';
+    if (canApproveExtension) {
+        extensionApproveButton = `<button class="btn btn-success" onclick="showExtensionApproveModal()">✅ 审批延期</button>`;
+    }
+
     const backPage = isArchiveDetail ? 'archive' : 'list';
     const backLabel = isArchiveDetail ? '返回归档库' : '返回列表';
 
@@ -2684,6 +2958,10 @@ function renderDocDetail() {
     }
     if (doc.isReturned) {
         statusBadgeExtra += '<span class="return-badge">已退回</span>';
+    }
+    const pendingExt = getPendingExtension(doc);
+    if (pendingExt) {
+        statusBadgeExtra += '<span class="extension-badge">延期申请中</span>';
     }
 
     const warningBadge = doc.deadline && !isArchiveDetail && !(doc.currentNode === FLOW_NODES.COMPLETE && doc.archived)
@@ -2701,6 +2979,8 @@ function renderDocDetail() {
                 <button class="btn btn-default" onclick="navigateTo('${backPage}')" style="margin-right:8px;">${backLabel}</button>
                 ${returnButton ? returnButton + ' ' : ''}
                 ${superviseButton ? superviseButton + ' ' : ''}
+                ${extensionButton ? extensionButton + ' ' : ''}
+                ${extensionApproveButton ? extensionApproveButton + ' ' : ''}
                 ${actionButton}
             </div>
         </div>
@@ -2747,8 +3027,18 @@ function renderDocDetail() {
                     <div class="detail-item">
                         <span class="detail-label">办理期限</span>
                         <span class="detail-value">
-                            ${doc.deadline ? formatDate(doc.deadline) : '-'}
-                            ${doc.deadline && !isArchiveDetail && !(doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) ? `（${renderRemainingTime(doc)}）` : ''}
+                            ${doc.deadline ? `
+                                <div>
+                                    ${getLatestApprovedExtension(doc) ? `
+                                        <div style="text-decoration: line-through; color: #999; font-size: 12px;">原期限：${formatDate(doc.deadline)}</div>
+                                        <div style="color: #1890ff; font-weight: 600;">当前期限：${formatDate(getEffectiveDeadline(doc))} ${renderRemainingTime(doc)}</div>
+                                        <div style="font-size: 12px; color: #999; margin-top: 2px;">已延期 ${getExtensionCount(doc)} 次</div>
+                                    ` : `
+                                        ${formatDate(doc.deadline)}
+                                        ${!isArchiveDetail && !(doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) ? `（${renderRemainingTime(doc)}）` : ''}
+                                    `}
+                                </div>
+                            ` : '-'}
                         </span>
                     </div>
                     <div class="detail-item">
@@ -2847,6 +3137,18 @@ function renderDocDetail() {
         </div>
         ` : ''}
 
+        ${doc.extensionRecords && doc.extensionRecords.length > 0 ? `
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">延期申请记录</span>
+                <span class="badge-count">${doc.extensionRecords.length} 条</span>
+            </div>
+            <div class="card-body">
+                ${renderExtensionTimeline(doc)}
+            </div>
+        </div>
+        ` : ''}
+
         <div class="card">
             <div class="card-header">
                 <span class="card-title">流转记录</span>
@@ -2855,7 +3157,95 @@ function renderDocDetail() {
                 ${renderTimeline(doc)}
             </div>
         </div>
+
+        ${renderDocTransferRecords(doc)}
     `;
+}
+
+function renderDocTransferRecords(doc) {
+    const transferRecords = transferStore.getRecordsByItem(doc.id, TRANSFER_TYPES.DOC);
+    const docTransferRecords = doc.transferRecords || [];
+    const allRecords = [...transferRecords, ...docTransferRecords];
+
+    if (allRecords.length === 0) return '';
+
+    const sortedRecords = allRecords.sort((a, b) => new Date(b.createdAt || b.time) - new Date(a.createdAt || a.time));
+
+    let recordsHtml = sortedRecords.map(record => {
+        const time = record.createdAt || record.time;
+        const operatorName = record.operatorName || '系统';
+        const fromUser = record.fromUserName || '未知';
+        const toUser = record.toUserName || '未知';
+        const handleTypeLabel = record.handleType ? getHandleTypeLabel(record.handleType) : '';
+        const remark = record.remark || '';
+
+        return `
+            <div class="transfer-record-item">
+                <div class="transfer-record-icon">🔄</div>
+                <div class="transfer-record-content">
+                    <div class="transfer-record-header">
+                        <span class="transfer-record-type">待办移交</span>
+                        <span class="transfer-record-time">${formatDateTime(time)}</span>
+                    </div>
+                    <div class="transfer-record-body">
+                        <div class="transfer-record-line">
+                            <span class="transfer-record-label">移出：</span>
+                            <span class="transfer-record-user">${fromUser}</span>
+                        </div>
+                        <div class="transfer-record-line">
+                            <span class="transfer-record-label">接收：</span>
+                            <span class="transfer-record-user">${toUser}</span>
+                        </div>
+                        <div class="transfer-record-line">
+                            <span class="transfer-record-label">操作人：</span>
+                            <span class="transfer-record-user">${operatorName}</span>
+                        </div>
+                        ${handleTypeLabel ? `
+                            <div class="transfer-record-line">
+                                <span class="transfer-record-label">类型：</span>
+                                <span class="transfer-record-badge">${handleTypeLabel}</span>
+                            </div>
+                        ` : ''}
+                        ${remark ? `
+                            <div class="transfer-record-line">
+                                <span class="transfer-record-label">备注：</span>
+                                <span class="transfer-record-remark">${remark}</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">移交记录</span>
+                <span class="card-badge">${sortedRecords.length}</span>
+            </div>
+            <div class="card-body">
+                <div class="transfer-records-list">
+                    ${recordsHtml}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function getHandleTypeLabel(handleType) {
+    const labels = {
+        [HANDLE_TYPES.MAIN]: '主办',
+        [HANDLE_TYPES.CO]: '协办',
+        'main_feedback': '反馈办理',
+        'leader_propose': '拟办批示',
+        'leader_assign': '分办指派',
+        'leader_review': '领导批示',
+        'office_archive': '待归档',
+        'office_resubmit': '退回待重提',
+        'office_work': '办公室工作'
+    };
+    return labels[handleType] || handleType;
 }
 
 function renderSupervisionTimeline(doc) {
@@ -2874,6 +3264,53 @@ function renderSupervisionTimeline(doc) {
                         <span class="supervision-time">${formatDateTime(record.time)}</span>
                     </div>
                     <div class="supervision-text">${record.content}</div>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    return html;
+}
+
+function renderExtensionTimeline(doc) {
+    const records = doc.extensionRecords || [];
+    if (records.length === 0) return '';
+
+    let html = '<div class="extension-timeline">';
+
+    records.slice().reverse().forEach(record => {
+        const statusClass = record.status === EXTENSION_STATUS.APPROVED ? 'approved' : 
+                          record.status === EXTENSION_STATUS.REJECTED ? 'rejected' : 'pending';
+        const statusLabel = EXTENSION_STATUS_LABELS[record.status];
+        const statusIcon = record.status === EXTENSION_STATUS.APPROVED ? '✅' : 
+                          record.status === EXTENSION_STATUS.REJECTED ? '❌' : '⏳';
+
+        html += `
+            <div class="extension-item">
+                <div class="extension-dot ext-${statusClass}">${statusIcon}</div>
+                <div class="extension-content">
+                    <div class="extension-header">
+                        <span class="extension-operator">${record.applicantName}（${record.applicantDept}）</span>
+                        <span class="extension-status-badge status-${statusClass}">${statusLabel}</span>
+                    </div>
+                    <div class="extension-time">申请时间：${formatDateTime(record.createdAt)}</div>
+                    <div class="extension-info">
+                        <div class="extension-reason"><strong>延期原因：</strong>${escapeHtml(record.reason)}</div>
+                        <div class="extension-deadline">
+                            <strong>申请期限：</strong>${formatDate(record.newDeadline)}
+                            <span style="color: #999; margin-left: 8px;">（原期限：${formatDate(record.originalDeadline)}）</span>
+                        </div>
+                    </div>
+                    ${record.status !== EXTENSION_STATUS.PENDING ? `
+                        <div class="extension-approval">
+                            <div class="approval-info">
+                                <strong>审批人：</strong>${record.approverName}（${record.approverDept}）
+                                <span style="margin-left: 12px;">${formatDateTime(record.approvedAt)}</span>
+                            </div>
+                            ${record.rejectReason ? `<div class="reject-reason"><strong>驳回原因：</strong>${escapeHtml(record.rejectReason)}</div>` : ''}
+                        </div>
+                    ` : ''}
                 </div>
             </div>
         `;
@@ -3039,6 +3476,17 @@ function renderMultiHandleTimelineContent(doc, records) {
         const isCompleted = hr.status === HANDLE_STATUS.COMPLETED;
         const flowRecord = records.find(r => r.operatorId === hr.userId);
 
+        let transferInfoHtml = '';
+        if (hr.transferredFrom) {
+            transferInfoHtml = `
+                <div class="transfer-info-badge">
+                    <span class="transfer-icon">🔄</span>
+                    <span class="transfer-text">原办理人：${hr.transferredFrom.userName}</span>
+                    <span class="transfer-time">${formatDateTime(hr.transferredFrom.time)}</span>
+                </div>
+            `;
+        }
+
         return `
             <div class="handle-record-item ${isCompleted ? 'completed' : 'pending'}" ${flowRecord ? `data-record-id="${flowRecord.id}"` : ''}>
                 <div class="handle-record-header">
@@ -3049,6 +3497,7 @@ function renderMultiHandleTimelineContent(doc, records) {
                         ${isCompleted ? '已完成' : '待办理'}
                     </span>
                 </div>
+                ${transferInfoHtml}
                 ${isCompleted && flowRecord ? `
                     <div class="handle-record-body">
                         <div class="timeline-meta">${formatDateTime(flowRecord.time)}</div>
@@ -3663,6 +4112,151 @@ function submitSupervision() {
     }
 }
 
+function showExtensionRequestModal() {
+    const doc = dataStore.getDoc(currentDocId);
+    if (!doc) return;
+
+    const currentDeadline = getEffectiveDeadline(doc);
+    const currentDeadlineDate = currentDeadline ? new Date(currentDeadline) : new Date();
+    const minDate = new Date(currentDeadlineDate.getTime() + 24 * 60 * 60 * 1000);
+    const minDateStr = minDate.toISOString().split('T')[0];
+
+    document.getElementById('modalTitle').textContent = '申请延期';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>延期原因</label>
+            <textarea class="form-textarea" id="extReason" rows="4" placeholder="请详细说明延期原因..."></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>期望新期限</label>
+            <input type="date" class="form-input" id="extNewDeadline" min="${minDateStr}">
+            <div style="font-size: 12px; color: #999; margin-top: 4px;">当前期限：${formatDate(currentDeadline)}</div>
+        </div>
+        <div class="extension-info">
+            <p><strong>公文标题：</strong>${doc.title}</p>
+            <p><strong>当前状态：</strong>${getDocStatusLabel(doc)}</p>
+            <p><strong>剩余时间：</strong>${renderRemainingTime(doc)}</p>
+        </div>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="submitExtensionRequest()">提交申请</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function submitExtensionRequest() {
+    const reason = document.getElementById('extReason').value.trim();
+    const newDeadline = document.getElementById('extNewDeadline').value;
+
+    if (!reason) {
+        showToast('请输入延期原因', 'error');
+        return;
+    }
+    if (!newDeadline) {
+        showToast('请选择期望新期限', 'error');
+        return;
+    }
+
+    const newDeadlineISO = new Date(newDeadline + 'T23:59:59').toISOString();
+    const result = dataStore.requestExtension(currentDocId, reason, newDeadlineISO, currentUser);
+    
+    if (result) {
+        closeModal();
+        showToast('延期申请已提交，请等待审批！', 'success');
+        refreshAfterExtensionChange();
+    } else {
+        showToast('提交失败，请重试', 'error');
+    }
+}
+
+function refreshAfterExtensionChange() {
+    renderNav();
+    if (currentPage === 'detail') {
+        renderDocDetail();
+    } else if (currentPage === 'supervision') {
+        renderSupervisionCenter();
+    } else if (currentPage === 'dashboard') {
+        renderDashboard();
+    } else if (currentPage === 'list') {
+        renderDocList();
+    } else if (currentPage === 'messages') {
+        renderMessages();
+    }
+}
+
+function showExtensionApproveModal() {
+    const doc = dataStore.getDoc(currentDocId);
+    if (!doc) return;
+
+    const pendingExt = getPendingExtension(doc);
+    if (!pendingExt) return;
+
+    document.getElementById('modalTitle').textContent = '审批延期申请';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="extension-approve-info">
+            <div class="approve-item">
+                <span class="approve-label">申请人：</span>
+                <span class="approve-value">${pendingExt.applicantName}（${pendingExt.applicantDept}）</span>
+            </div>
+            <div class="approve-item">
+                <span class="approve-label">申请时间：</span>
+                <span class="approve-value">${formatDateTime(pendingExt.createdAt)}</span>
+            </div>
+            <div class="approve-item">
+                <span class="approve-label">原期限：</span>
+                <span class="approve-value">${formatDate(pendingExt.originalDeadline)}</span>
+            </div>
+            <div class="approve-item">
+                <span class="approve-label">申请新期限：</span>
+                <span class="approve-value" style="color: #1890ff; font-weight: 600;">${formatDate(pendingExt.newDeadline)}</span>
+            </div>
+            <div class="approve-item approve-reason">
+                <span class="approve-label">延期原因：</span>
+                <div class="approve-value">${escapeHtml(pendingExt.reason)}</div>
+            </div>
+        </div>
+        <div class="form-group" style="margin-top: 16px;">
+            <label class="form-label">驳回原因（驳回时必填）</label>
+            <textarea class="form-textarea" id="extRejectReason" rows="3" placeholder="如驳回，请填写驳回原因..."></textarea>
+        </div>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-danger" onclick="submitExtensionReject()">驳回</button>
+            <button class="btn btn-success" onclick="submitExtensionApprove()">通过</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function submitExtensionApprove() {
+    const result = dataStore.approveExtension(currentDocId, currentUser, currentRole);
+    if (result) {
+        closeModal();
+        showToast('延期申请已通过！', 'success');
+        refreshAfterExtensionChange();
+    } else {
+        showToast('操作失败，请重试', 'error');
+    }
+}
+
+function submitExtensionReject() {
+    const rejectReason = document.getElementById('extRejectReason').value.trim();
+    if (!rejectReason) {
+        showToast('请填写驳回原因', 'error');
+        return;
+    }
+
+    const result = dataStore.rejectExtension(currentDocId, rejectReason, currentUser, currentRole);
+    if (result) {
+        closeModal();
+        showToast('延期申请已驳回！', 'warning');
+        refreshAfterExtensionChange();
+    } else {
+        showToast('操作失败，请重试', 'error');
+    }
+}
+
 function showReturnModal() {
     const doc = dataStore.getDoc(currentDocId);
     if (!doc) return;
@@ -3913,6 +4507,9 @@ function submitResubmit() {
 function closeModal() {
     document.getElementById('modal').classList.add('hidden');
     operateAttachments = [];
+    if (typeof _handleDraftRecoveryModalClose === 'function') {
+        _handleDraftRecoveryModalClose();
+    }
 }
 
 function showToast(message, type = 'success') {
@@ -3984,7 +4581,7 @@ function renderTemplateList() {
                         </select>
                     </div>
                     <div class="template-tip">
-                        <span style="color:#888; font-size:13px;">共 ${templates.length} 个模板，按使用频率排序</span>
+                        <span style="color:#888; font-size:13px;">共 ${templates.length} 个模板，置顶优先，按最近使用排序</span>
                     </div>
                 </div>
             </div>
@@ -3995,14 +4592,17 @@ function renderTemplateList() {
                 ${templates.length > 0 ? `
                     <div class="template-list">
                         ${templates.map(tpl => `
-                            <div class="template-item">
+                            <div class="template-item ${tpl.isPinned ? 'pinned' : ''}">
                                 <div class="template-item-header">
                                     <div class="template-item-title">
+                                        ${tpl.isPinned ? '<span class="template-pin-icon" title="已置顶">📌</span>' : ''}
                                         <span class="template-type-tag ${tpl.type}">${TEMPLATE_TYPE_LABELS[tpl.type]}</span>
                                         <span class="template-title-text">${escapeHtml(tpl.title)}</span>
                                     </div>
                                     <div class="template-item-actions">
                                         <span class="template-use-count">使用 ${tpl.useCount} 次</span>
+                                        <a class="action-link" onclick="toggleTemplatePin('${tpl.id}')">${tpl.isPinned ? '取消置顶' : '置顶'}</a>
+                                        <a class="action-link" onclick="showEditTemplateModal('${tpl.id}')">编辑</a>
                                         <a class="action-link" onclick="deleteTemplate('${tpl.id}')">删除</a>
                                     </div>
                                 </div>
@@ -4083,6 +4683,81 @@ function deleteTemplate(templateId) {
     }
 }
 
+let editingTemplateId = null;
+
+function showEditTemplateModal(templateId) {
+    const templates = templateStore.getUserTemplates(currentUser.id);
+    const template = templates.find(t => t.id === templateId);
+    if (!template) return;
+
+    editingTemplateId = templateId;
+
+    let typeOptions = [];
+    Object.keys(TEMPLATE_TYPE_LABELS).forEach(key => {
+        typeOptions.push({ value: key, label: TEMPLATE_TYPE_LABELS[key] });
+    });
+
+    document.getElementById('modalTitle').textContent = '编辑常用模板';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>模板类型</label>
+            <select class="form-select" id="editTemplateType">
+                ${typeOptions.map(o => `<option value="${o.value}" ${template.type === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>模板标题</label>
+            <input type="text" class="form-input" id="editTemplateTitle" value="${escapeHtml(template.title)}" placeholder="给模板起个简短的名字">
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>模板内容</label>
+            <textarea class="form-textarea" id="editTemplateContent" rows="6" placeholder="请输入常用的意见内容...">${escapeHtml(template.content)}</textarea>
+        </div>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="updateTemplate()">保存修改</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function updateTemplate() {
+    if (!editingTemplateId) return;
+
+    const type = document.getElementById('editTemplateType').value;
+    const title = document.getElementById('editTemplateTitle').value.trim();
+    const content = document.getElementById('editTemplateContent').value.trim();
+
+    if (!title) {
+        showToast('请输入模板标题', 'error');
+        return;
+    }
+    if (!content) {
+        showToast('请输入模板内容', 'error');
+        return;
+    }
+
+    const result = templateStore.updateTemplate(currentUser.id, editingTemplateId, { type, title, content });
+    if (result) {
+        closeModal();
+        showToast('模板修改成功！');
+        renderTemplateList();
+    } else {
+        showToast('修改失败', 'error');
+    }
+    editingTemplateId = null;
+}
+
+function toggleTemplatePin(templateId) {
+    const result = templateStore.togglePin(currentUser.id, templateId);
+    if (result) {
+        showToast(result.isPinned ? '已置顶' : '已取消置顶');
+        renderTemplateList();
+    } else {
+        showToast('操作失败', 'error');
+    }
+}
+
 function renderTemplateSelector(type) {
     const templates = templateStore.getUserTemplates(currentUser.id, type);
 
@@ -4094,12 +4769,12 @@ function renderTemplateSelector(type) {
         <div class="template-selector">
             <div class="template-selector-label">
                 <span>📝 常用模板</span>
-                <span class="template-selector-hint">点击快速插入</span>
+                <span class="template-selector-hint">置顶优先 · 点击快速插入</span>
             </div>
             <div class="template-selector-list">
-                ${templates.slice(0, 5).map(tpl => `
-                    <button type="button" class="template-chip" onclick="insertTemplateContent('${tpl.id}')" title="${escapeHtml(tpl.content)}">
-                        ${escapeHtml(tpl.title)}
+                ${templates.slice(0, 6).map(tpl => `
+                    <button type="button" class="template-chip ${tpl.isPinned ? 'pinned' : ''}" onclick="insertTemplateContent('${tpl.id}')" title="${escapeHtml(tpl.content)}">
+                        ${tpl.isPinned ? '<span class="chip-pin-icon">📌</span>' : ''}${escapeHtml(tpl.title)}
                     </button>
                 `).join('')}
             </div>
@@ -4142,7 +4817,10 @@ function getMessageIcon(type) {
         [MESSAGE_TYPES.DOC_FEEDBACK]: '📤',
         [MESSAGE_TYPES.DOC_COMPLETED]: '✅',
         [MESSAGE_TYPES.DOC_ARCHIVED]: '📦',
-        [MESSAGE_TYPES.SUPERVISION]: '📢'
+        [MESSAGE_TYPES.SUPERVISION]: '📢',
+        [MESSAGE_TYPES.EXTENSION_REQUEST]: '⏳',
+        [MESSAGE_TYPES.EXTENSION_APPROVED]: '✅',
+        [MESSAGE_TYPES.EXTENSION_REJECTED]: '❌'
     };
     return icons[type] || '🔔';
 }
@@ -4152,6 +4830,38 @@ function getMessageTypeLabel(type) {
 }
 
 let messageFilterType = '';
+let messageViewMode = 'list';
+let expandedDocGroups = new Set();
+
+function groupMessagesByDoc(messages) {
+    const groups = {};
+    messages.forEach(msg => {
+        const docId = msg.docId || 'no_doc';
+        if (!groups[docId]) {
+            groups[docId] = {
+                docId: docId,
+                docTitle: msg.docTitle || '无关联公文',
+                messages: [],
+                unreadCount: 0,
+                latestTime: null
+            };
+        }
+        groups[docId].messages.push(msg);
+        if (!msg.read) {
+            groups[docId].unreadCount++;
+        }
+        if (!groups[docId].latestTime || new Date(msg.createdAt) > new Date(groups[docId].latestTime)) {
+            groups[docId].latestTime = msg.createdAt;
+        }
+    });
+    const result = Object.values(groups).sort((a, b) => {
+        if (a.unreadCount !== b.unreadCount) {
+            return b.unreadCount - a.unreadCount;
+        }
+        return new Date(b.latestTime) - new Date(a.latestTime);
+    });
+    return result;
+}
 
 function renderMessageList() {
     const content = document.getElementById('contentArea');
@@ -4165,17 +4875,23 @@ function renderMessageList() {
         { value: MESSAGE_TYPES.DOC_HANDLED, label: '办理中' },
         { value: MESSAGE_TYPES.DOC_FEEDBACK, label: '已反馈' },
         { value: MESSAGE_TYPES.DOC_COMPLETED, label: '待归档' },
-        { value: MESSAGE_TYPES.DOC_ARCHIVED, label: '已归档' }
+        { value: MESSAGE_TYPES.DOC_ARCHIVED, label: '已归档' },
+        { value: MESSAGE_TYPES.SUPERVISION, label: '督办通知' },
+        { value: MESSAGE_TYPES.EXTENSION_REQUEST, label: '延期申请' },
+        { value: MESSAGE_TYPES.EXTENSION_APPROVED, label: '延期通过' },
+        { value: MESSAGE_TYPES.EXTENSION_REJECTED, label: '延期驳回' }
     ];
 
     const filteredMessages = messageFilterType
         ? allMessages.filter(m => m.type === messageFilterType)
         : allMessages;
 
+    const groupedData = groupMessagesByDoc(filteredMessages);
+
     content.innerHTML = `
         <div class="page-header">
             <h2 class="page-title">消息中心</h2>
-            <div style="display:flex; gap:10px;">
+            <div style="display:flex; gap:10px; align-items:center;">
                 <span class="unread-count-big">未读：${unreadCount} 条</span>
                 <button class="btn btn-default btn-sm" onclick="markAllMessagesRead()" ${unreadCount === 0 ? 'disabled' : ''}>全部标为已读</button>
             </div>
@@ -4189,12 +4905,20 @@ function renderMessageList() {
                             <div class="message-tab ${messageFilterType === opt.value ? 'active' : ''}"
                                  onclick="filterMessages('${opt.value}')">
                                 ${opt.label}
-                                ${opt.value === '' ? '' : ''}
                             </div>
                         `).join('')}
                     </div>
-                    <div class="message-count-info">
-                        共 ${filteredMessages.length} 条消息
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <div class="message-view-toggle">
+                            <span class="view-toggle-btn ${messageViewMode === 'list' ? 'active' : ''}"
+                                  onclick="setMessageViewMode('list')" title="列表视图">📋 列表</span>
+                            <span class="view-toggle-btn ${messageViewMode === 'grouped' ? 'active' : ''}"
+                                  onclick="setMessageViewMode('grouped')" title="按公文聚合">📁 按公文</span>
+                        </div>
+                        <div class="message-count-info">
+                            共 ${filteredMessages.length} 条消息
+                            ${messageViewMode === 'grouped' && filteredMessages.length > 0 ? ` · ${groupedData.length} 份公文` : ''}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -4203,37 +4927,166 @@ function renderMessageList() {
         <div class="card">
             <div class="card-body" style="padding:0;">
                 ${filteredMessages.length > 0 ? `
-                    <div class="message-list-full">
-                        ${filteredMessages.map(msg => `
-                            <div class="message-item-full ${msg.read ? '' : 'unread'}"
-                                 onclick="handleMessageClick('${msg.id}', '${msg.docId}')">
-                                <div class="message-icon msg-${msg.type}">
-                                    ${getMessageIcon(msg.type)}
-                                </div>
-                                <div class="message-content-full">
-                                    <div class="message-header">
-                                        <div class="message-title-full">
-                                            ${msg.read ? '' : '<span class="message-dot"></span>'}
-                                            ${msg.title}
-                                        </div>
-                                        <span class="message-type-tag">${getMessageTypeLabel(msg.type)}</span>
-                                    </div>
-                                    <div class="message-body">
-                                        ${msg.content}
-                                    </div>
-                                    <div class="message-footer">
-                                        <span class="message-from">来自：${msg.fromUserName}</span>
-                                        <span class="message-time">${formatDateTime(msg.createdAt)}</span>
-                                        ${msg.read ? '' : '<span class="mark-read-btn" onclick="event.stopPropagation(); markMessageRead(\'' + msg.id + '\')">标为已读</span>'}
-                                    </div>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
+                    ${messageViewMode === 'list' ? renderMessageListView(filteredMessages) : renderMessageGroupedView(groupedData)}
                 ` : '<div class="empty-state"><div class="empty-icon">🔔</div><p>暂无消息</p></div>'}
             </div>
         </div>
     `;
+}
+
+function renderMessageListView(messages) {
+    return `
+        <div class="message-list-full">
+            ${messages.map(msg => `
+                <div class="message-item-full ${msg.read ? '' : 'unread'}"
+                     onclick="handleMessageClick('${msg.id}', '${msg.docId}')">
+                    <div class="message-icon msg-${msg.type}">
+                        ${getMessageIcon(msg.type)}
+                    </div>
+                    <div class="message-content-full">
+                        <div class="message-header">
+                            <div class="message-title-full">
+                                ${msg.read ? '' : '<span class="message-dot"></span>'}
+                                ${msg.title}
+                            </div>
+                            <span class="message-type-tag">${getMessageTypeLabel(msg.type)}</span>
+                        </div>
+                        <div class="message-body">
+                            ${msg.content}
+                        </div>
+                        <div class="message-footer">
+                            <span class="message-from">来自：${msg.fromUserName}</span>
+                            <span class="message-time">${formatDateTime(msg.createdAt)}</span>
+                            ${msg.read ? '' : '<span class="mark-read-btn" onclick="event.stopPropagation(); markMessageRead(\'' + msg.id + '\')">标为已读</span>'}
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderMessageGroupedView(groups) {
+    return `
+        <div class="message-grouped-list">
+            ${groups.map(group => {
+                const isExpanded = expandedDocGroups.has(group.docId);
+                const hasDoc = group.docId && group.docId !== 'no_doc';
+                return `
+                    <div class="message-group ${group.unreadCount > 0 ? 'has-unread' : ''}">
+                        <div class="message-group-header">
+                            <div class="group-expand-icon"
+                                 onclick="event.stopPropagation(); toggleDocGroup('${group.docId}')"
+                                 title="${isExpanded ? '收起' : '展开'}">
+                                ${isExpanded ? '▼' : '▶'}
+                            </div>
+                            <div class="group-main-area"
+                                 onclick="${hasDoc ? `handleGroupClick('${group.docId}')` : ''}"
+                                 ${hasDoc ? 'style="cursor:pointer;"' : ''}>
+                                <div class="group-doc-icon">📄</div>
+                                <div class="group-doc-info">
+                                    <div class="group-doc-title">
+                                        ${group.unreadCount > 0 ? '<span class="message-dot"></span>' : ''}
+                                        ${escapeHtml(group.docTitle)}
+                                    </div>
+                                    <div class="group-doc-meta">
+                                        <span class="group-doc-id">${group.docId === 'no_doc' ? '无关联公文' : group.docId}</span>
+                                        <span class="group-msg-count">${group.messages.length} 条消息</span>
+                                        <span class="group-latest-time">最新：${formatDateTime(group.latestTime)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="group-actions">
+                                ${group.unreadCount > 0 ? `
+                                    <span class="group-unread-badge">${group.unreadCount} 条未读</span>
+                                    <button class="btn btn-text btn-sm"
+                                            onclick="event.stopPropagation(); markDocGroupAsRead('${group.docId}')"
+                                            title="全部标为已读">
+                                        ✓ 全部已读
+                                    </button>
+                                ` : ''}
+                                ${hasDoc ? `
+                                    <button class="btn btn-text btn-sm"
+                                            onclick="event.stopPropagation(); goToDocDetail('${group.docId}')"
+                                            title="查看公文详情">
+                                        查看公文 →
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </div>
+                        ${isExpanded ? `
+                            <div class="message-group-items">
+                                ${group.messages.map(msg => `
+                                    <div class="message-item-full ${msg.read ? '' : 'unread'} message-group-item"
+                                         onclick="handleMessageClick('${msg.id}', '${msg.docId}')">
+                                        <div class="message-icon msg-${msg.type}">
+                                            ${getMessageIcon(msg.type)}
+                                        </div>
+                                        <div class="message-content-full">
+                                            <div class="message-header">
+                                                <div class="message-title-full">
+                                                    ${msg.read ? '' : '<span class="message-dot"></span>'}
+                                                    ${msg.title}
+                                                </div>
+                                                <span class="message-type-tag">${getMessageTypeLabel(msg.type)}</span>
+                                            </div>
+                                            <div class="message-body">
+                                                ${msg.content}
+                                            </div>
+                                            <div class="message-footer">
+                                                <span class="message-from">来自：${msg.fromUserName}</span>
+                                                <span class="message-time">${formatDateTime(msg.createdAt)}</span>
+                                                ${msg.read ? '' : '<span class="mark-read-btn" onclick="event.stopPropagation(); markMessageRead(\'' + msg.id + '\')">标为已读</span>'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function setMessageViewMode(mode) {
+    messageViewMode = mode;
+    renderMessageList();
+}
+
+function toggleDocGroup(docId) {
+    if (expandedDocGroups.has(docId)) {
+        expandedDocGroups.delete(docId);
+    } else {
+        expandedDocGroups.add(docId);
+    }
+    renderMessageList();
+}
+
+function markDocGroupAsRead(docId) {
+    const count = messageStore.markDocMessagesAsRead(docId, currentRole, currentUser);
+    if (count > 0) {
+        showToast(`已将 ${count} 条消息标为已读`);
+    }
+    renderMessageList();
+    renderNav();
+}
+
+function goToDocDetail(docId) {
+    if (docId && docId !== 'no_doc') {
+        messageStore.markDocMessagesAsRead(docId, currentRole, currentUser);
+        renderNav();
+        navigateTo('detail', { id: docId });
+    }
+}
+
+function handleGroupClick(docId) {
+    if (docId && docId !== 'no_doc') {
+        messageStore.markDocMessagesAsRead(docId, currentRole, currentUser);
+        renderNav();
+        navigateTo('detail', { id: docId });
+    }
 }
 
 function filterMessages(type) {
@@ -4931,6 +5784,10 @@ function renderBatchImportResult() {
 
 let userManageTab = 'departments';
 let userManageShowInactive = false;
+let transferFilterType = 'all';
+let transferFilterKeyword = '';
+let transferFilterFromDate = '';
+let transferFilterToDate = '';
 
 function renderUserManage() {
     const content = document.getElementById('contentArea');
@@ -4939,6 +5796,7 @@ function renderUserManage() {
     const deptCount = depts.length;
     const userCount = userStore.getAllUsers().length;
     const inactiveCount = userStore.getAllUsersWithInactive().filter(u => !u.active).length;
+    const transferCount = transferStore.getAllRecords().length;
 
     content.innerHTML = `
         <div class="page-header">
@@ -4968,6 +5826,13 @@ function renderUserManage() {
                     <div class="user-stat-label">已停用</div>
                 </div>
             </div>
+            <div class="user-stat-card">
+                <div class="user-stat-icon transfer">🔄</div>
+                <div class="user-stat-info">
+                    <div class="user-stat-number">${transferCount}</div>
+                    <div class="user-stat-label">移交记录</div>
+                </div>
+            </div>
         </div>
 
         <div class="card">
@@ -4977,6 +5842,9 @@ function renderUserManage() {
                 </div>
                 <div class="tab-item ${userManageTab === 'users' ? 'active' : ''}" onclick="switchUserManageTab('users')">
                     <span>👤</span> 人员管理
+                </div>
+                <div class="tab-item ${userManageTab === 'transfers' ? 'active' : ''}" onclick="switchUserManageTab('transfers')">
+                    <span>🔄</span> 移交记录
                 </div>
             </div>
             <div class="card-body user-manage-content">
@@ -4999,6 +5867,8 @@ function renderUserManageTabContent() {
 
     if (userManageTab === 'departments') {
         container.innerHTML = renderDepartmentManage();
+    } else if (userManageTab === 'transfers') {
+        container.innerHTML = renderTransferRecordsPage();
     } else {
         container.innerHTML = renderUserManageList();
     }
@@ -5168,6 +6038,173 @@ function renderUserManageList() {
 
 function toggleShowInactiveUsers() {
     userManageShowInactive = document.getElementById('showInactiveUsers').checked;
+    renderUserManageTabContent();
+}
+
+function renderTransferRecordsPage() {
+    const allRecords = transferStore.getAllRecords();
+    let filteredRecords = [...allRecords];
+
+    if (transferFilterType !== 'all') {
+        filteredRecords = filteredRecords.filter(r => r.type === transferFilterType);
+    }
+
+    const keyword = transferFilterKeyword.trim().toLowerCase();
+    if (keyword) {
+        filteredRecords = filteredRecords.filter(r =>
+            r.fromUserName.toLowerCase().includes(keyword) ||
+            r.toUserName.toLowerCase().includes(keyword) ||
+            r.operatorName.toLowerCase().includes(keyword) ||
+            r.itemTitle.toLowerCase().includes(keyword) ||
+            r.remark.toLowerCase().includes(keyword)
+        );
+    }
+
+    if (transferFilterFromDate) {
+        filteredRecords = filteredRecords.filter(r => r.createdAt >= transferFilterFromDate);
+    }
+    if (transferFilterToDate) {
+        filteredRecords = filteredRecords.filter(r => r.createdAt <= transferFilterToDate + 'T23:59:59');
+    }
+
+    filteredRecords.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    return `
+        <div class="transfer-page-header">
+            <div class="page-header-title">
+                <h3 style="margin:0 0 6px 0;">移交记录查询</h3>
+                <p style="margin:0; color:#888; font-size:13px;">查看所有公文、草稿和消息的移交历史</p>
+            </div>
+        </div>
+
+        <div class="transfer-filters">
+            <div class="filter-row">
+                <div class="filter-item">
+                    <label class="filter-label">移交类型</label>
+                    <select class="form-select form-select-sm" onchange="setTransferFilterType(this.value)">
+                        <option value="all" ${transferFilterType === 'all' ? 'selected' : ''}>全部</option>
+                        <option value="${TRANSFER_TYPES.DOC}" ${transferFilterType === TRANSFER_TYPES.DOC ? 'selected' : ''}>公文</option>
+                        <option value="${TRANSFER_TYPES.DRAFT}" ${transferFilterType === TRANSFER_TYPES.DRAFT ? 'selected' : ''}>草稿</option>
+                        <option value="${TRANSFER_TYPES.MESSAGE}" ${transferFilterType === TRANSFER_TYPES.MESSAGE ? 'selected' : ''}>消息</option>
+                    </select>
+                </div>
+                <div class="filter-item">
+                    <label class="filter-label">关键词</label>
+                    <input type="text" class="form-input form-input-sm" placeholder="搜索人员、标题..." 
+                           value="${escapeHtml(transferFilterKeyword)}"
+                           onkeyup="if(event.key==='Enter')setTransferFilterKeyword(this.value)"
+                           onblur="setTransferFilterKeyword(this.value)">
+                </div>
+                <div class="filter-item">
+                    <label class="filter-label">开始日期</label>
+                    <input type="date" class="form-input form-input-sm" 
+                           value="${transferFilterFromDate}"
+                           onchange="setTransferFilterFromDate(this.value)">
+                </div>
+                <div class="filter-item">
+                    <label class="filter-label">结束日期</label>
+                    <input type="date" class="form-input form-input-sm" 
+                           value="${transferFilterToDate}"
+                           onchange="setTransferFilterToDate(this.value)">
+                </div>
+                <div class="filter-item filter-reset">
+                    <button class="btn btn-default btn-sm" onclick="resetTransferFilters()">重置</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="transfer-stats-row">
+            <div class="transfer-stat-item">
+                <span class="transfer-stat-label">总记录数</span>
+                <span class="transfer-stat-value">${filteredRecords.length}</span>
+            </div>
+            <div class="transfer-stat-item">
+                <span class="transfer-stat-label">公文移交</span>
+                <span class="transfer-stat-value">${filteredRecords.filter(r => r.type === TRANSFER_TYPES.DOC).length}</span>
+            </div>
+            <div class="transfer-stat-item">
+                <span class="transfer-stat-label">草稿移交</span>
+                <span class="transfer-stat-value">${filteredRecords.filter(r => r.type === TRANSFER_TYPES.DRAFT).length}</span>
+            </div>
+            <div class="transfer-stat-item">
+                <span class="transfer-stat-label">消息移交</span>
+                <span class="transfer-stat-value">${filteredRecords.filter(r => r.type === TRANSFER_TYPES.MESSAGE).length}</span>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width:60px;">序号</th>
+                        <th style="width:80px;">类型</th>
+                        <th>移交内容</th>
+                        <th style="width:100px;">移出人员</th>
+                        <th style="width:100px;">接收人员</th>
+                        <th style="width:100px;">操作人</th>
+                        <th style="width:150px;">移交时间</th>
+                        <th style="width:200px;">备注</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${filteredRecords.length > 0 ? filteredRecords.map((record, index) => {
+                        const typeLabel = TRANSFER_TYPE_LABELS[record.type] || record.type;
+                        const typeClass = record.type;
+                        return `
+                        <tr>
+                            <td>${index + 1}</td>
+                            <td>
+                                <span class="transfer-type-badge ${typeClass}">${typeLabel}</span>
+                            </td>
+                            <td>
+                                <div class="transfer-item-title" title="${escapeHtml(record.itemTitle)}">${escapeHtml(record.itemTitle)}</div>
+                            </td>
+                            <td><span class="user-name-tag">${record.fromUserName}</span></td>
+                            <td><span class="user-name-tag">${record.toUserName}</span></td>
+                            <td><span class="user-name-tag gray">${record.operatorName}</span></td>
+                            <td style="color:#888; font-size:12px;">${formatDateTime(record.createdAt)}</td>
+                            <td style="color:#888; font-size:12px;">${record.remark || '-'}</td>
+                        </tr>
+                    `}).join('') : `
+                        <tr>
+                            <td colspan="8">
+                                <div class="empty-state">
+                                    <div class="empty-icon">🔄</div>
+                                    <p>暂无移交记录</p>
+                                </div>
+                            </td>
+                        </tr>
+                    `}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function setTransferFilterType(value) {
+    transferFilterType = value;
+    renderUserManageTabContent();
+}
+
+function setTransferFilterKeyword(value) {
+    transferFilterKeyword = value;
+}
+
+function setTransferFilterFromDate(value) {
+    transferFilterFromDate = value;
+    renderUserManageTabContent();
+}
+
+function setTransferFilterToDate(value) {
+    transferFilterToDate = value;
+    renderUserManageTabContent();
+}
+
+function resetTransferFilters() {
+    transferFilterType = 'all';
+    transferFilterKeyword = '';
+    transferFilterFromDate = '';
+    transferFilterToDate = '';
     renderUserManageTabContent();
 }
 
@@ -5372,16 +6409,467 @@ function confirmDeleteUser(userId) {
     const user = userStore.getUserById(userId);
     if (!user) return;
 
-    if (!confirm(`确定要停用人员"${user.name}"吗？\n\n停用后：\n• 登录时将无法选择该用户\n• 分办时将无法选择该用户\n• 历史公文中已记录的姓名会保留`)) {
+    const pendingItems = getUserPendingItems(userId);
+
+    if (pendingItems.summary.total > 0) {
+        openTransferModal(userId, pendingItems);
+    } else {
+        if (!confirm(`确定要停用人员"${user.name}"吗？\n\n停用后：\n• 登录时将无法选择该用户\n• 分办时将无法选择该用户\n• 历史公文中已记录的姓名会保留`)) {
+            return;
+        }
+        const result = userStore.deleteUser(userId);
+        if (result.success) {
+            showToast('人员已停用');
+            renderUserManageTabContent();
+        } else {
+            showToast(result.error || '操作失败', 'error');
+        }
+    }
+}
+
+let currentTransferUserId = null;
+let currentTransferPendingItems = null;
+let transferStep = 'check';
+let transferReceiverSearch = '';
+let selectedReceiverId = null;
+
+function openTransferModal(userId, pendingItems) {
+    currentTransferUserId = userId;
+    currentTransferPendingItems = pendingItems;
+    transferStep = 'check';
+    transferReceiverSearch = '';
+    selectedReceiverId = null;
+
+    const user = userStore.getUserById(userId);
+    if (!user) return;
+
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBody = document.getElementById('modalBody');
+
+    modalTitle.textContent = '停用人员 - 待办移交';
+    modalBody.innerHTML = renderTransferModalContent();
+
+    modal.classList.remove('hidden');
+}
+
+function renderTransferModalContent() {
+    const user = userStore.getUserById(currentTransferUserId);
+    if (!user) return '';
+
+    if (transferStep === 'check') {
+        return renderTransferCheckStep(user);
+    } else if (transferStep === 'select') {
+        return renderTransferSelectStep(user);
+    } else if (transferStep === 'confirm') {
+        return renderTransferConfirmStep(user);
+    }
+    return '';
+}
+
+function renderTransferCheckStep(user) {
+    const { summary, docs, drafts, messages } = currentTransferPendingItems;
+
+    return `
+        <div class="transfer-modal">
+            <div class="transfer-alert">
+                <div class="transfer-alert-icon">⚠️</div>
+                <div class="transfer-alert-content">
+                    <h4>该人员有待办事项，需先完成移交</h4>
+                    <p>停用 <strong>${user.name}</strong>（${ROLE_LABELS[user.role]} / ${user.dept}）前，请将其名下的待办事项移交给其他人员。</p>
+                </div>
+            </div>
+
+            <div class="transfer-stats">
+                <div class="transfer-stat-item">
+                    <div class="transfer-stat-number">${summary.docs}</div>
+                    <div class="transfer-stat-label">待办公文</div>
+                </div>
+                <div class="transfer-stat-item">
+                    <div class="transfer-stat-number">${summary.drafts}</div>
+                    <div class="transfer-stat-label">草稿</div>
+                </div>
+                <div class="transfer-stat-item">
+                    <div class="transfer-stat-number">${summary.messages}</div>
+                    <div class="transfer-stat-label">未读消息</div>
+                </div>
+            </div>
+
+            <div class="transfer-detail-section">
+                <div class="transfer-detail-header" onclick="toggleTransferDetail('docs')">
+                    <span>📋 待办公文（${docs.length}件）</span>
+                    <span class="transfer-detail-toggle" id="docsToggle">▼</span>
+                </div>
+                <div class="transfer-detail-content" id="docsContent">
+                    ${docs.length > 0 ? `
+                        <div class="transfer-list">
+                            ${docs.map(doc => `
+                                <div class="transfer-list-item">
+                                    <div class="transfer-item-title">${doc.title}</div>
+                                    <div class="transfer-item-meta">
+                                        <span class="transfer-item-badge">${doc.handleTypeLabel}</span>
+                                        <span class="transfer-item-id">${doc.id}</span>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : '<div class="transfer-empty">暂无待办公文</div>'}
+                </div>
+            </div>
+
+            <div class="transfer-detail-section">
+                <div class="transfer-detail-header" onclick="toggleTransferDetail('drafts')">
+                    <span>📝 草稿（${drafts.length}件）</span>
+                    <span class="transfer-detail-toggle" id="draftsToggle">▼</span>
+                </div>
+                <div class="transfer-detail-content" id="draftsContent">
+                    ${drafts.length > 0 ? `
+                        <div class="transfer-list">
+                            ${drafts.map(draft => `
+                                <div class="transfer-list-item">
+                                    <div class="transfer-item-title">${draft.title}</div>
+                                    <div class="transfer-item-meta">
+                                        <span class="transfer-item-time">${formatDateTime(draft.updatedAt)}</span>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : '<div class="transfer-empty">暂无草稿</div>'}
+                </div>
+            </div>
+
+            <div class="transfer-detail-section">
+                <div class="transfer-detail-header" onclick="toggleTransferDetail('messages')">
+                    <span>🔔 未读消息（${messages.length}条）</span>
+                    <span class="transfer-detail-toggle" id="messagesToggle">▼</span>
+                </div>
+                <div class="transfer-detail-content" id="messagesContent">
+                    ${messages.length > 0 ? `
+                        <div class="transfer-list">
+                            ${messages.map(msg => `
+                                <div class="transfer-list-item">
+                                    <div class="transfer-item-title">${msg.title}</div>
+                                    <div class="transfer-item-meta">
+                                        <span class="transfer-item-desc">${escapeHtml(msg.content)}</span>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : '<div class="transfer-empty">暂无未读消息</div>'}
+                </div>
+            </div>
+
+            <div class="transfer-options">
+                <label class="transfer-option">
+                    <input type="checkbox" id="transferDocsCheck" checked ${summary.docs === 0 ? 'disabled' : ''}>
+                    <span>移交待办公文</span>
+                </label>
+                <label class="transfer-option">
+                    <input type="checkbox" id="transferDraftsCheck" checked ${summary.drafts === 0 ? 'disabled' : ''}>
+                    <span>移交草稿</span>
+                </label>
+                <label class="transfer-option">
+                    <input type="checkbox" id="transferMessagesCheck" checked ${summary.messages === 0 ? 'disabled' : ''}>
+                    <span>移交未读消息</span>
+                </label>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">移交备注（可选）</label>
+                <textarea class="form-textarea" id="transferRemark" placeholder="请输入移交备注..." rows="2"></textarea>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-default" onclick="closeModal()">取消</button>
+                <button class="btn btn-primary" onclick="goToTransferSelect()">下一步：选择接收人</button>
+            </div>
+        </div>
+    `;
+}
+
+function toggleTransferDetail(type) {
+    const content = document.getElementById(type + 'Content');
+    const toggle = document.getElementById(type + 'Toggle');
+    if (!content || !toggle) return;
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        toggle.textContent = '▼';
+    } else {
+        content.style.display = 'none';
+        toggle.textContent = '▶';
+    }
+}
+
+function goToTransferSelect() {
+    transferStep = 'select';
+    document.getElementById('modalBody').innerHTML = renderTransferModalContent();
+}
+
+function renderTransferSelectStep(user) {
+    const receivers = getAvailableReceivers(currentTransferUserId);
+    let { sameRole, sameDept } = receivers;
+
+    const searchKeyword = transferReceiverSearch.trim().toLowerCase();
+    if (searchKeyword) {
+        sameRole = sameRole.filter(u =>
+            u.name.toLowerCase().includes(searchKeyword) ||
+            u.dept.toLowerCase().includes(searchKeyword) ||
+            u.id.toLowerCase().includes(searchKeyword)
+        );
+        sameDept = sameDept.filter(u =>
+            u.name.toLowerCase().includes(searchKeyword) ||
+            u.dept.toLowerCase().includes(searchKeyword) ||
+            u.id.toLowerCase().includes(searchKeyword)
+        );
+    }
+
+    const hasResults = sameRole.length > 0 || sameDept.length > 0;
+
+    return `
+        <div class="transfer-modal">
+            <div class="transfer-step-indicator">
+                <span class="step-done">1. 确认待办</span>
+                <span class="step-arrow">→</span>
+                <span class="step-active">2. 选择接收人</span>
+                <span class="step-arrow">→</span>
+                <span class="step-pending">3. 确认移交</span>
+            </div>
+
+            <div class="transfer-receiver-section">
+                <h4>选择接收人</h4>
+                <p class="transfer-hint">建议选择同角色或同科室的人员进行移交</p>
+
+                <div class="receiver-search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" 
+                           class="receiver-search-input" 
+                           placeholder="搜索姓名、科室或工号..."
+                           value="${escapeHtml(transferReceiverSearch)}"
+                           oninput="onReceiverSearch(this.value)"
+                           onkeyup="if(event.key==='Enter')onReceiverSearch(this.value)">
+                </div>
+
+                ${sameRole.length > 0 ? `
+                    <div class="receiver-group">
+                        <div class="receiver-group-title">同角色（${ROLE_LABELS[user.role]}）</div>
+                        <div class="receiver-list">
+                            ${sameRole.map(u => `
+                                <label class="receiver-item ${selectedReceiverId === u.id ? 'selected' : ''}" onclick="selectReceiver('${u.id}')">
+                                    <input type="radio" name="receiver" value="${u.id}" id="receiver_${u.id}" ${selectedReceiverId === u.id ? 'checked' : ''}>
+                                    <div class="receiver-info">
+                                        <div class="receiver-name">${u.name}</div>
+                                        <div class="receiver-meta">${u.dept}</div>
+                                    </div>
+                                    <div class="receiver-badge">${ROLE_LABELS[u.role]}</div>
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${sameDept.length > 0 ? `
+                    <div class="receiver-group">
+                        <div class="receiver-group-title">同科室（${user.dept}）</div>
+                        <div class="receiver-list">
+                            ${sameDept.map(u => `
+                                <label class="receiver-item ${selectedReceiverId === u.id ? 'selected' : ''}" onclick="selectReceiver('${u.id}')">
+                                    <input type="radio" name="receiver" value="${u.id}" id="receiver_${u.id}" ${selectedReceiverId === u.id ? 'checked' : ''}>
+                                    <div class="receiver-info">
+                                        <div class="receiver-name">${u.name}</div>
+                                        <div class="receiver-meta">${ROLE_LABELS[u.role]}</div>
+                                    </div>
+                                    <div class="receiver-badge">${u.dept}</div>
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${!hasResults ? `
+                    <div class="transfer-empty">
+                        <div class="empty-icon">👥</div>
+                        <p>${searchKeyword ? '未找到匹配的接收人' : '暂无符合条件的接收人'}</p>
+                        <p class="transfer-hint">${searchKeyword ? '请尝试其他搜索关键词' : '请先添加同角色或同科室的人员'}</p>
+                    </div>
+                ` : ''}
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-default" onclick="goToTransferCheck()">上一步</button>
+                <button class="btn btn-primary" onclick="goToTransferConfirm()" id="transferNextBtn" ${!selectedReceiverId ? 'disabled' : ''}>下一步：确认移交</button>
+            </div>
+        </div>
+    `;
+}
+
+function onReceiverSearch(value) {
+    transferReceiverSearch = value;
+    renderTransferSelectStepRefresh();
+}
+
+function renderTransferSelectStepRefresh() {
+    const user = userStore.getUserById(currentTransferUserId);
+    document.getElementById('modalBody').innerHTML = renderTransferSelectStep(user);
+}
+
+function selectReceiver(receiverId) {
+    selectedReceiverId = receiverId;
+    const radio = document.getElementById('receiver_' + receiverId);
+    if (radio) {
+        radio.checked = true;
+    }
+    const nextBtn = document.getElementById('transferNextBtn');
+    if (nextBtn) {
+        nextBtn.disabled = false;
+    }
+    renderTransferSelectStepRefresh();
+}
+
+function goToTransferCheck() {
+    transferStep = 'check';
+    document.getElementById('modalBody').innerHTML = renderTransferModalContent();
+}
+
+function goToTransferConfirm() {
+    const selectedReceiver = document.querySelector('input[name="receiver"]:checked');
+    if (!selectedReceiver) {
+        showToast('请选择接收人', 'warning');
         return;
     }
-    const result = userStore.deleteUser(userId);
+
+    transferStep = 'confirm';
+    document.getElementById('modalBody').innerHTML = renderTransferModalContent();
+}
+
+function renderTransferConfirmStep(user) {
+    const selectedReceiver = document.querySelector('input[name="receiver"]:checked');
+    const receiverId = selectedReceiver ? selectedReceiver.value : null;
+    const receiver = userStore.getUserById(receiverId);
+
+    const transferDocs = document.getElementById('transferDocsCheck')?.checked ?? true;
+    const transferDrafts = document.getElementById('transferDraftsCheck')?.checked ?? true;
+    const transferMessages = document.getElementById('transferMessagesCheck')?.checked ?? true;
+    const remark = document.getElementById('transferRemark')?.value ?? '';
+
+    const { summary } = currentTransferPendingItems;
+    const docCount = transferDocs ? summary.docs : 0;
+    const draftCount = transferDrafts ? summary.drafts : 0;
+    const msgCount = transferMessages ? summary.messages : 0;
+
+    return `
+        <div class="transfer-modal">
+            <div class="transfer-step-indicator">
+                <span class="step-done">1. 确认待办</span>
+                <span class="step-arrow">→</span>
+                <span class="step-done">2. 选择接收人</span>
+                <span class="step-arrow">→</span>
+                <span class="step-active">3. 确认移交</span>
+            </div>
+
+            <div class="transfer-confirm-section">
+                <h4>移交确认</h4>
+
+                <div class="transfer-confirm-row">
+                    <div class="transfer-confirm-label">移出人员</div>
+                    <div class="transfer-confirm-value">
+                        <strong>${user.name}</strong>
+                        <span class="transfer-confirm-meta">${ROLE_LABELS[user.role]} / ${user.dept}</span>
+                    </div>
+                </div>
+
+                <div class="transfer-confirm-arrow">↓</div>
+
+                <div class="transfer-confirm-row">
+                    <div class="transfer-confirm-label">接收人员</div>
+                    <div class="transfer-confirm-value">
+                        <strong>${receiver ? receiver.name : '-'}</strong>
+                        <span class="transfer-confirm-meta">${receiver ? ROLE_LABELS[receiver.role] + ' / ' + receiver.dept : '-'}</span>
+                    </div>
+                </div>
+
+                <div class="transfer-confirm-divider"></div>
+
+                <div class="transfer-confirm-items">
+                    <div class="transfer-confirm-item">
+                        <span>📋 待办公文</span>
+                        <span>${transferDocs ? docCount + ' 件' : '不移交'}</span>
+                    </div>
+                    <div class="transfer-confirm-item">
+                        <span>📝 草稿</span>
+                        <span>${transferDrafts ? draftCount + ' 件' : '不移交'}</span>
+                    </div>
+                    <div class="transfer-confirm-item">
+                        <span>🔔 未读消息</span>
+                        <span>${transferMessages ? msgCount + ' 条' : '不移交'}</span>
+                    </div>
+                </div>
+
+                ${remark ? `
+                    <div class="transfer-confirm-row">
+                        <div class="transfer-confirm-label">移交备注</div>
+                        <div class="transfer-confirm-value">${escapeHtml(remark)}</div>
+                    </div>
+                ` : ''}
+
+                <div class="transfer-warning-box">
+                    <p>📌 <strong>重要提示：</strong></p>
+                    <ul>
+                        <li>历史办理记录中的原办理人姓名会保留，不会被修改</li>
+                        <li>移交后，接收人将收到系统消息通知</li>
+                        <li>所有移交记录都会被保存，可追溯查询</li>
+                        <li>移交完成后，该人员将被自动停用</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-default" onclick="goToTransferSelect()">上一步</button>
+                <button class="btn btn-primary btn-danger" onclick="doTransferAndDeactivate()">确认移交并停用</button>
+            </div>
+        </div>
+    `;
+}
+
+function doTransferAndDeactivate() {
+    const receiverId = selectedReceiverId;
+    if (!receiverId) {
+        showToast('请选择接收人', 'warning');
+        return;
+    }
+
+    const transferDocs = document.getElementById('transferDocsCheck')?.checked ?? true;
+    const transferDrafts = document.getElementById('transferDraftsCheck')?.checked ?? true;
+    const transferMessages = document.getElementById('transferMessagesCheck')?.checked ?? true;
+    const remark = document.getElementById('transferRemark')?.value ?? '';
+
+    const result = deleteUserWithTransfer(
+        currentTransferUserId,
+        receiverId,
+        currentUser,
+        {
+            transferDocs,
+            transferDrafts,
+            transferMessages,
+            remark
+        }
+    );
+
     if (result.success) {
-        showToast('人员已停用');
-        renderUserManageTabContent();
+        closeModal();
+        const transferredCount = result.transferred ? result.transferSummary.total : 0;
+        showToast(`移交并停用成功，共移交 ${transferredCount} 项待办`, 'success');
+        renderUserManage();
     } else {
         showToast(result.error || '操作失败', 'error');
     }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 function confirmRestoreUser(userId) {

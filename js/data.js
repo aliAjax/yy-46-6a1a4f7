@@ -497,14 +497,45 @@ function getDeadline(doc) {
     return doc.deadline;
 }
 
+function getLatestApprovedExtension(doc) {
+    if (!doc.extensionRecords || doc.extensionRecords.length === 0) return null;
+    const approved = doc.extensionRecords.filter(r => r.status === EXTENSION_STATUS.APPROVED);
+    if (approved.length === 0) return null;
+    return approved.sort((a, b) => new Date(b.approvedAt) - new Date(a.approvedAt))[0];
+}
+
+function getEffectiveDeadline(doc) {
+    const latestApproved = getLatestApprovedExtension(doc);
+    if (latestApproved) {
+        return latestApproved.newDeadline;
+    }
+    return doc.deadline || null;
+}
+
+function hasPendingExtension(doc) {
+    if (!doc.extensionRecords || doc.extensionRecords.length === 0) return false;
+    return doc.extensionRecords.some(r => r.status === EXTENSION_STATUS.PENDING);
+}
+
+function getPendingExtension(doc) {
+    if (!doc.extensionRecords || doc.extensionRecords.length === 0) return null;
+    return doc.extensionRecords.find(r => r.status === EXTENSION_STATUS.PENDING) || null;
+}
+
+function getExtensionCount(doc) {
+    if (!doc.extensionRecords || doc.extensionRecords.length === 0) return 0;
+    return doc.extensionRecords.filter(r => r.status === EXTENSION_STATUS.APPROVED).length;
+}
+
 function getRemainingDays(doc) {
     if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
         return null;
     }
-    if (!doc.deadline) return null;
+    const effectiveDeadline = getEffectiveDeadline(doc);
+    if (!effectiveDeadline) return null;
 
     const now = new Date();
-    const deadline = new Date(doc.deadline);
+    const deadline = new Date(effectiveDeadline);
     const diffTime = deadline.getTime() - now.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return diffDays;
@@ -748,6 +779,11 @@ class DataStore {
                 changed = true;
             }
 
+            if (doc.extensionRecords === undefined) {
+                doc.extensionRecords = [];
+                changed = true;
+            }
+
             if (doc.flowRecords) {
                 doc.flowRecords.forEach((record, idx) => {
                     if (!record.id) {
@@ -840,6 +876,10 @@ class DataStore {
                 draft.status = 'draft';
                 changed = true;
             }
+            if (draft.deadline === undefined) {
+                draft.deadline = null;
+                changed = true;
+            }
         });
         if (changed) {
             this.saveDrafts();
@@ -891,7 +931,7 @@ class DataStore {
             assignedUserName: null,
             isMultiDept: false,
             handleRecords: [],
-            deadline: null,
+            deadline: docData.deadline || null,
             archived: false,
             createdAt: now,
             createdBy: creator.id,
@@ -1456,6 +1496,169 @@ class DataStore {
         }
 
         return record;
+    }
+
+    canRequestExtension(doc, role, user) {
+        if (!doc || !user) return false;
+        if (doc.currentNode === FLOW_NODES.REGISTER) return false;
+        if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) return false;
+        if (!doc.deadline) return false;
+        if (hasPendingExtension(doc)) return false;
+
+        if (role === ROLES.STAFF) {
+            return isHandler(doc, user.id);
+        }
+
+        return false;
+    }
+
+    requestExtension(docId, reason, newDeadline, operator) {
+        const doc = this.getDoc(docId);
+        if (!doc || !this.canRequestExtension(doc, ROLES.STAFF, operator)) return null;
+
+        const now = new Date().toISOString();
+        const record = {
+            id: 'ext_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            reason: reason,
+            newDeadline: newDeadline,
+            originalDeadline: getEffectiveDeadline(doc),
+            status: EXTENSION_STATUS.PENDING,
+            applicantId: operator.id,
+            applicantName: operator.name,
+            applicantDept: operator.dept,
+            createdAt: now,
+            approverId: null,
+            approverName: null,
+            approverDept: null,
+            approvedAt: null,
+            rejectReason: null
+        };
+
+        doc.extensionRecords = doc.extensionRecords || [];
+        doc.extensionRecords.push(record);
+        this.save();
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.EXTENSION_REQUEST,
+            title: '延期申请待审批',
+            content: `《${doc.title}》申请延期，请审批`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toRole: ROLES.LEADER
+        });
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.EXTENSION_REQUEST,
+            title: '延期申请待审批',
+            content: `《${doc.title}》申请延期，请审批`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toRole: ROLES.OFFICE
+        });
+
+        return record;
+    }
+
+    canApproveExtension(doc, role, user) {
+        if (!doc || !user) return false;
+        if (!hasPendingExtension(doc)) return false;
+
+        if (role === ROLES.LEADER || role === ROLES.OFFICE) {
+            return true;
+        }
+
+        return false;
+    }
+
+    approveExtension(docId, operator, role) {
+        const doc = this.getDoc(docId);
+        if (!doc || !this.canApproveExtension(doc, role, operator)) return null;
+
+        const pendingExt = getPendingExtension(doc);
+        if (!pendingExt) return null;
+
+        const now = new Date().toISOString();
+        pendingExt.status = EXTENSION_STATUS.APPROVED;
+        pendingExt.approverId = operator.id;
+        pendingExt.approverName = operator.name;
+        pendingExt.approverDept = operator.dept;
+        pendingExt.approvedAt = now;
+
+        this.save();
+
+        const handlerUserIds = getAllHandlerUserIds(doc);
+        handlerUserIds.forEach(userId => {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.EXTENSION_APPROVED,
+                title: '延期申请已通过',
+                content: `《${doc.title}》延期申请已通过，新期限为${formatDate(pendingExt.newDeadline)}`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toUserId: userId
+            });
+        });
+
+        return pendingExt;
+    }
+
+    rejectExtension(docId, rejectReason, operator, role) {
+        const doc = this.getDoc(docId);
+        if (!doc || !this.canApproveExtension(doc, role, operator)) return null;
+
+        const pendingExt = getPendingExtension(doc);
+        if (!pendingExt) return null;
+
+        const now = new Date().toISOString();
+        pendingExt.status = EXTENSION_STATUS.REJECTED;
+        pendingExt.approverId = operator.id;
+        pendingExt.approverName = operator.name;
+        pendingExt.approverDept = operator.dept;
+        pendingExt.approvedAt = now;
+        pendingExt.rejectReason = rejectReason;
+
+        this.save();
+
+        const handlerUserIds = getAllHandlerUserIds(doc);
+        handlerUserIds.forEach(userId => {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.EXTENSION_REJECTED,
+                title: '延期申请被驳回',
+                content: `《${doc.title}》延期申请被驳回，驳回原因：${rejectReason}`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toUserId: userId
+            });
+        });
+
+        return pendingExt;
+    }
+
+    getExtensionStats(role, user) {
+        const stats = {
+            pending: 0,
+            myPending: 0
+        };
+
+        const activeDocs = this.docs.filter(d =>
+            d.currentNode !== FLOW_NODES.REGISTER &&
+            !(d.currentNode === FLOW_NODES.COMPLETE && d.archived)
+        );
+
+        activeDocs.forEach(doc => {
+            if (hasPendingExtension(doc)) {
+                stats.pending++;
+            }
+        });
+
+        return stats;
     }
 
     listSupervisionDocs(filters = {}) {
@@ -2041,6 +2244,7 @@ class DataStore {
             priority: draftData.priority || 'normal',
             category: draftData.category || '',
             content: draftData.content || '',
+            deadline: draftData.deadline || null,
             attachments: draftData.attachments || [],
             createdBy: creator.id,
             createdByName: creator.name,
@@ -2065,6 +2269,7 @@ class DataStore {
         if (draftData.priority !== undefined) draft.priority = draftData.priority;
         if (draftData.category !== undefined) draft.category = draftData.category;
         if (draftData.content !== undefined) draft.content = draftData.content;
+        if (draftData.deadline !== undefined) draft.deadline = draftData.deadline;
         if (draftData.attachments !== undefined) draft.attachments = draftData.attachments;
         draft.updatedAt = now;
 
@@ -2131,6 +2336,10 @@ class DataStore {
                     valA = a.fromUnit || '';
                     valB = b.fromUnit || '';
                     break;
+                case 'deadline':
+                    valA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+                    valB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+                    break;
                 case 'createdAt':
                     valA = new Date(a.createdAt).getTime();
                     valB = new Date(b.createdAt).getTime();
@@ -2192,6 +2401,7 @@ class DataStore {
             priority: draft.priority || 'normal',
             category: draft.category || '',
             content: draft.content || '',
+            deadline: draft.deadline || null,
             attachments: draft.attachments || []
         };
 
@@ -2686,12 +2896,20 @@ class TemplateStore {
 
     getUserTemplates(userId, type = null) {
         const userTemplates = this.templates[userId] || [];
-        if (type) {
-            return userTemplates
-                .filter(t => t.type === type)
-                .sort((a, b) => b.useCount - a.useCount || b.createdAt - a.createdAt);
-        }
-        return userTemplates.sort((a, b) => b.useCount - a.useCount || b.createdAt - a.createdAt);
+        let filtered = type ? userTemplates.filter(t => t.type === type) : userTemplates;
+        return filtered.sort((a, b) => {
+            if (a.isPinned && !b.isPinned) return -1;
+            if (!a.isPinned && b.isPinned) return 1;
+            const aLastUsed = a.lastUsedAt || 0;
+            const bLastUsed = b.lastUsedAt || 0;
+            if (aLastUsed !== bLastUsed) {
+                return bLastUsed - aLastUsed;
+            }
+            if (a.useCount !== b.useCount) {
+                return b.useCount - a.useCount;
+            }
+            return b.createdAt - a.createdAt;
+        });
     }
 
     addTemplate(userId, templateData) {
@@ -2704,9 +2922,33 @@ class TemplateStore {
             content: templateData.content,
             type: templateData.type,
             useCount: 0,
+            isPinned: false,
+            pinnedAt: null,
+            lastUsedAt: null,
             createdAt: Date.now()
         };
         this.templates[userId].push(template);
+        this.save();
+        return template;
+    }
+
+    updateTemplate(userId, templateId, templateData) {
+        if (!this.templates[userId]) return null;
+        const template = this.templates[userId].find(t => t.id === templateId);
+        if (!template) return null;
+        template.title = templateData.title;
+        template.content = templateData.content;
+        template.type = templateData.type;
+        this.save();
+        return template;
+    }
+
+    togglePin(userId, templateId) {
+        if (!this.templates[userId]) return null;
+        const template = this.templates[userId].find(t => t.id === templateId);
+        if (!template) return null;
+        template.isPinned = !template.isPinned;
+        template.pinnedAt = template.isPinned ? Date.now() : null;
         this.save();
         return template;
     }
@@ -2725,6 +2967,7 @@ class TemplateStore {
         const template = this.templates[userId].find(t => t.id === templateId);
         if (!template) return null;
         template.useCount = (template.useCount || 0) + 1;
+        template.lastUsedAt = Date.now();
         this.save();
         return template;
     }
@@ -2733,23 +2976,24 @@ class TemplateStore {
         const hasAny = Object.keys(this.templates).some(k => this.templates[k].length > 0);
         if (hasAny) return;
 
+        const now = Date.now();
         this.templates = {
             leader1: [
-                { id: 'tpl_l1_1', title: '请相关科室研究办理', content: '请相关科室认真研究，按要求办理落实。', type: TEMPLATE_TYPES.PROPOSE, useCount: 5, createdAt: Date.now() - 86400000 * 10 },
-                { id: 'tpl_l1_2', title: '请综合科牵头办理', content: '请综合科牵头，会同相关科室研究办理，及时反馈结果。', type: TEMPLATE_TYPES.PROPOSE, useCount: 3, createdAt: Date.now() - 86400000 * 8 },
-                { id: 'tpl_l1_3', title: '同意，按程序办理', content: '同意，按程序办理。', type: TEMPLATE_TYPES.ASSIGN, useCount: 8, createdAt: Date.now() - 86400000 * 5 },
-                { id: 'tpl_l1_4', title: '请业务科承办', content: '请业务科负责承办，按要求推进相关工作。', type: TEMPLATE_TYPES.ASSIGN, useCount: 2, createdAt: Date.now() - 86400000 * 3 }
+                { id: 'tpl_l1_1', title: '请相关科室研究办理', content: '请相关科室认真研究，按要求办理落实。', type: TEMPLATE_TYPES.PROPOSE, useCount: 5, isPinned: true, pinnedAt: now - 86400000 * 2, lastUsedAt: now - 3600000 * 2, createdAt: now - 86400000 * 10 },
+                { id: 'tpl_l1_2', title: '请综合科牵头办理', content: '请综合科牵头，会同相关科室研究办理，及时反馈结果。', type: TEMPLATE_TYPES.PROPOSE, useCount: 3, isPinned: false, pinnedAt: null, lastUsedAt: now - 3600000 * 5, createdAt: now - 86400000 * 8 },
+                { id: 'tpl_l1_3', title: '同意，按程序办理', content: '同意，按程序办理。', type: TEMPLATE_TYPES.ASSIGN, useCount: 8, isPinned: true, pinnedAt: now - 86400000 * 1, lastUsedAt: now - 3600000, createdAt: now - 86400000 * 5 },
+                { id: 'tpl_l1_4', title: '请业务科承办', content: '请业务科负责承办，按要求推进相关工作。', type: TEMPLATE_TYPES.ASSIGN, useCount: 2, isPinned: false, pinnedAt: null, lastUsedAt: now - 86400000, createdAt: now - 86400000 * 3 }
             ],
             leader2: [
-                { id: 'tpl_l2_1', title: '请王局长阅示', content: '此件重要，请王局长阅示。', type: TEMPLATE_TYPES.PROPOSE, useCount: 4, createdAt: Date.now() - 86400000 * 7 }
+                { id: 'tpl_l2_1', title: '请王局长阅示', content: '此件重要，请王局长阅示。', type: TEMPLATE_TYPES.PROPOSE, useCount: 4, isPinned: false, pinnedAt: null, lastUsedAt: now - 3600000 * 10, createdAt: now - 86400000 * 7 }
             ],
             staff1: [
-                { id: 'tpl_s1_1', title: '已按要求办理', content: '已按要求完成相关工作，现报送办理结果。', type: TEMPLATE_TYPES.HANDLE, useCount: 6, createdAt: Date.now() - 86400000 * 6 },
-                { id: 'tpl_s1_2', title: '工作进展顺利', content: '各项工作正在有序推进，总体进展顺利。', type: TEMPLATE_TYPES.HANDLE, useCount: 2, createdAt: Date.now() - 86400000 * 4 },
-                { id: 'tpl_s1_3', title: '办理完成，请审阅', content: '已完成全部办理工作，相关材料已整理完毕，请领导审阅。', type: TEMPLATE_TYPES.FEEDBACK, useCount: 4, createdAt: Date.now() - 86400000 * 2 }
+                { id: 'tpl_s1_1', title: '已按要求办理', content: '已按要求完成相关工作，现报送办理结果。', type: TEMPLATE_TYPES.HANDLE, useCount: 6, isPinned: true, pinnedAt: now - 86400000 * 3, lastUsedAt: now - 3600000 * 3, createdAt: now - 86400000 * 6 },
+                { id: 'tpl_s1_2', title: '工作进展顺利', content: '各项工作正在有序推进，总体进展顺利。', type: TEMPLATE_TYPES.HANDLE, useCount: 2, isPinned: false, pinnedAt: null, lastUsedAt: now - 86400000 * 2, createdAt: now - 86400000 * 4 },
+                { id: 'tpl_s1_3', title: '办理完成，请审阅', content: '已完成全部办理工作，相关材料已整理完毕，请领导审阅。', type: TEMPLATE_TYPES.FEEDBACK, useCount: 4, isPinned: false, pinnedAt: null, lastUsedAt: now - 3600000 * 8, createdAt: now - 86400000 * 2 }
             ],
             staff3: [
-                { id: 'tpl_s3_1', title: '业务办理标准模板', content: '已按照业务规范和相关要求完成办理工作，具体情况如下：\n一、办理情况\n二、主要成效\n三、下一步计划', type: TEMPLATE_TYPES.HANDLE, useCount: 3, createdAt: Date.now() - 86400000 * 5 }
+                { id: 'tpl_s3_1', title: '业务办理标准模板', content: '已按照业务规范和相关要求完成办理工作，具体情况如下：\n一、办理情况\n二、主要成效\n三、下一步计划', type: TEMPLATE_TYPES.HANDLE, useCount: 3, isPinned: false, pinnedAt: null, lastUsedAt: now - 86400000 * 5, createdAt: now - 86400000 * 5 }
             ]
         };
         this.save();
@@ -2758,6 +3002,18 @@ class TemplateStore {
 
 const templateStore = new TemplateStore();
 templateStore.initMockTemplates();
+
+const EXTENSION_STATUS = {
+    PENDING: 'pending',
+    APPROVED: 'approved',
+    REJECTED: 'rejected'
+};
+
+const EXTENSION_STATUS_LABELS = {
+    [EXTENSION_STATUS.PENDING]: '待审批',
+    [EXTENSION_STATUS.APPROVED]: '已通过',
+    [EXTENSION_STATUS.REJECTED]: '已驳回'
+};
 
 const MESSAGE_TYPES = {
     NEW_DOC_PROPOSE: 'new_doc_propose',
@@ -2768,7 +3024,10 @@ const MESSAGE_TYPES = {
     DOC_ARCHIVED: 'doc_archived',
     SUPERVISION: 'supervision',
     DOC_RETURNED: 'doc_returned',
-    DOC_RESUBMITTED: 'doc_resubmitted'
+    DOC_RESUBMITTED: 'doc_resubmitted',
+    EXTENSION_REQUEST: 'extension_request',
+    EXTENSION_APPROVED: 'extension_approved',
+    EXTENSION_REJECTED: 'extension_rejected'
 };
 
 const MESSAGE_TYPE_LABELS = {
@@ -2780,7 +3039,10 @@ const MESSAGE_TYPE_LABELS = {
     [MESSAGE_TYPES.DOC_ARCHIVED]: '已归档',
     [MESSAGE_TYPES.SUPERVISION]: '督办',
     [MESSAGE_TYPES.DOC_RETURNED]: '已退回',
-    [MESSAGE_TYPES.DOC_RESUBMITTED]: '已重提'
+    [MESSAGE_TYPES.DOC_RESUBMITTED]: '已重提',
+    [MESSAGE_TYPES.EXTENSION_REQUEST]: '延期申请',
+    [MESSAGE_TYPES.EXTENSION_APPROVED]: '延期通过',
+    [MESSAGE_TYPES.EXTENSION_REJECTED]: '延期驳回'
 };
 
 const MESSAGE_STORAGE_KEY = 'doc_flow_messages';
@@ -2871,6 +3133,16 @@ class MessageStore {
         });
         this.save();
         return userMessages.length;
+    }
+
+    markDocMessagesAsRead(docId, role, user) {
+        const userMessages = this.getMessagesForUser(role, user);
+        const docMessages = userMessages.filter(m => m.docId === docId && !m.read);
+        docMessages.forEach(msg => {
+            msg.read = true;
+        });
+        this.save();
+        return docMessages.length;
     }
 
     getMessage(id) {
@@ -3321,3 +3593,598 @@ class FilterViewStore {
 }
 
 const filterViewStore = new FilterViewStore();
+
+const TRANSFER_STORAGE_KEY = 'doc_flow_transfers';
+
+const TRANSFER_TYPES = {
+    DOC: 'doc',
+    DRAFT: 'draft',
+    MESSAGE: 'message'
+};
+
+const TRANSFER_TYPE_LABELS = {
+    [TRANSFER_TYPES.DOC]: '公文',
+    [TRANSFER_TYPES.DRAFT]: '草稿',
+    [TRANSFER_TYPES.MESSAGE]: '消息'
+};
+
+class TransferStore {
+    constructor() {
+        this.records = [];
+        this.load();
+    }
+
+    load() {
+        const data = localStorage.getItem(TRANSFER_STORAGE_KEY);
+        if (data) {
+            try {
+                const parsed = JSON.parse(data);
+                this.records = parsed.records || [];
+            } catch (e) {
+                this.records = [];
+            }
+        }
+    }
+
+    save() {
+        localStorage.setItem(TRANSFER_STORAGE_KEY, JSON.stringify({
+            records: this.records
+        }));
+    }
+
+    generateId() {
+        return 'trans_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    createTransferRecord(transferData) {
+        const now = new Date().toISOString();
+        const record = {
+            id: this.generateId(),
+            fromUserId: transferData.fromUserId,
+            fromUserName: transferData.fromUserName,
+            toUserId: transferData.toUserId,
+            toUserName: transferData.toUserName,
+            type: transferData.type,
+            itemId: transferData.itemId,
+            itemTitle: transferData.itemTitle || '',
+            remark: transferData.remark || '',
+            operatorId: transferData.operatorId,
+            operatorName: transferData.operatorName,
+            createdAt: now
+        };
+        this.records.unshift(record);
+        this.save();
+        return record;
+    }
+
+    getRecordsByUser(userId) {
+        return this.records.filter(r => r.fromUserId === userId || r.toUserId === userId);
+    }
+
+    getRecordsByItem(itemId, type) {
+        return this.records.filter(r => r.itemId === itemId && r.type === type);
+    }
+
+    getAllRecords() {
+        return [...this.records];
+    }
+}
+
+const transferStore = new TransferStore();
+
+function getUserPendingItems(userId) {
+    const user = userStore.getUserById(userId);
+    if (!user) {
+        return { docs: [], drafts: [], messages: [], summary: { total: 0, docs: 0, drafts: 0, messages: 0 } };
+    }
+
+    const docs = [];
+
+    dataStore.docs.forEach(doc => {
+        if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) return;
+
+        let isPending = false;
+        let handleType = '';
+        let handleTypeLabel = '';
+
+        if (user.role === ROLES.LEADER) {
+            if (doc.currentNode === FLOW_NODES.PROPOSE) {
+                isPending = true;
+                handleType = 'leader_propose';
+                handleTypeLabel = '拟办批示';
+            } else if (doc.currentNode === FLOW_NODES.ASSIGN) {
+                isPending = true;
+                handleType = 'leader_assign';
+                handleTypeLabel = '分办指派';
+            }
+        }
+
+        if (user.role === ROLES.OFFICE) {
+            if (doc.currentNode === FLOW_NODES.COMPLETE && !doc.archived) {
+                isPending = true;
+                handleType = 'office_archive';
+                handleTypeLabel = '待归档';
+            }
+            if (doc.isReturned && doc.currentNode === FLOW_NODES.REGISTER) {
+                isPending = true;
+                handleType = 'office_resubmit';
+                handleTypeLabel = '退回待重提';
+            }
+        }
+
+        if (user.role === ROLES.STAFF) {
+            if (doc.isMultiDept && doc.handleRecords) {
+                const handlerRecord = doc.handleRecords.find(r => r.userId === userId);
+                if (handlerRecord) {
+                    if (handlerRecord.status === HANDLE_STATUS.PENDING && doc.currentNode === FLOW_NODES.HANDLE) {
+                        isPending = true;
+                        handleType = handlerRecord.type;
+                        handleTypeLabel = handlerRecord.type === HANDLE_TYPES.MAIN ? '主办' : '协办';
+                    }
+                    if (handlerRecord.type === HANDLE_TYPES.MAIN && doc.currentNode === FLOW_NODES.FEEDBACK) {
+                        isPending = true;
+                        handleType = 'main_feedback';
+                        handleTypeLabel = '反馈办理';
+                    }
+                }
+            } else if (doc.assignedUser === userId) {
+                if (doc.currentNode === FLOW_NODES.HANDLE) {
+                    isPending = true;
+                    handleType = HANDLE_TYPES.MAIN;
+                    handleTypeLabel = '主办';
+                }
+                if (doc.currentNode === FLOW_NODES.FEEDBACK) {
+                    isPending = true;
+                    handleType = 'main_feedback';
+                    handleTypeLabel = '反馈办理';
+                }
+            }
+        }
+
+        if (isPending) {
+            docs.push({
+                id: doc.id,
+                title: doc.title,
+                currentNode: doc.currentNode,
+                statusLabel: getDocStatusLabel(doc),
+                handleType: handleType,
+                handleTypeLabel: handleTypeLabel,
+                isReturned: doc.isReturned || false,
+                priority: doc.priority
+            });
+        }
+    });
+
+    const drafts = dataStore.drafts
+        .filter(d => d.createdBy === userId)
+        .map(d => ({
+            id: d.id,
+            title: d.title || '(无标题)',
+            updatedAt: d.updatedAt,
+            priority: d.priority
+        }));
+
+    const messages = messageStore.messages
+        .filter(m => !m.read && (m.toUserId === userId || (m.toRole && m.toRole === user.role)))
+        .map(m => ({
+            id: m.id,
+            title: m.title,
+            content: m.content,
+            docId: m.docId || '',
+            type: m.type,
+            createdAt: m.createdAt,
+            fromUserName: m.fromUserName || ''
+        }));
+
+    return {
+        docs,
+        drafts,
+        messages,
+        summary: {
+            total: docs.length + drafts.length + messages.length,
+            docs: docs.length,
+            drafts: drafts.length,
+            messages: messages.length
+        }
+    };
+}
+
+function getAvailableReceivers(fromUserId) {
+    const fromUser = userStore.getUserById(fromUserId);
+    if (!fromUser) return { sameRole: [], sameDept: [] };
+
+    const sameRole = userStore.getUsersByRole(fromUser.role)
+        .filter(u => u.id !== fromUserId && u.active)
+        .map(u => ({
+            id: u.id,
+            name: u.name,
+            dept: u.dept,
+            role: u.role,
+            roleLabel: ROLE_LABELS[u.role],
+            group: 'sameRole',
+            groupLabel: '同角色'
+        }));
+
+    const sameDept = userStore.getUsersByDept(fromUser.dept)
+        .filter(u => u.id !== fromUserId && u.active)
+        .map(u => ({
+            id: u.id,
+            name: u.name,
+            dept: u.dept,
+            role: u.role,
+            roleLabel: ROLE_LABELS[u.role],
+            group: 'sameDept',
+            groupLabel: '同科室'
+        }));
+
+    return { sameRole, sameDept, all: [...sameRole, ...sameDept] };
+}
+
+function executeTransfer(fromUserId, toUserId, operator, options = {}) {
+    const fromUser = userStore.getUserById(fromUserId);
+    const toUser = userStore.getUserById(toUserId);
+    if (!fromUser || !toUser) {
+        return { success: false, error: '用户不存在' };
+    }
+    if (!toUser.active) {
+        return { success: false, error: '接收人已停用' };
+    }
+    if (fromUserId === toUserId) {
+        return { success: false, error: '不能移交给自己' };
+    }
+
+    const { transferDocs = true, transferDrafts = true, transferMessages = true, remark = '' } = options;
+    const results = { docs: 0, drafts: 0, messages: 0, total: 0 };
+
+    if (transferDocs) {
+        results.docs = transferDocsToUser(fromUserId, toUserId, operator, remark);
+        results.total += results.docs;
+    }
+
+    if (transferDrafts) {
+        results.drafts = transferDraftsToUser(fromUserId, toUserId, operator, remark);
+        results.total += results.drafts;
+    }
+
+    if (transferMessages) {
+        results.messages = transferMessagesToUser(fromUserId, toUserId, fromUser.role, operator, remark);
+        results.total += results.messages;
+    }
+
+    return { success: true, results };
+}
+
+function transferDocsToUser(fromUserId, toUserId, operator, remark = '') {
+    const fromUser = userStore.getUserById(fromUserId);
+    const toUser = userStore.getUserById(toUserId);
+    if (!fromUser || !toUser) return 0;
+
+    let count = 0;
+    const now = new Date().toISOString();
+
+    dataStore.docs.forEach(doc => {
+        if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) return;
+
+        let transferred = false;
+        let transferDetail = '';
+
+        if (fromUser.role === ROLES.STAFF) {
+            if (doc.isMultiDept && doc.handleRecords) {
+                doc.handleRecords.forEach(hr => {
+                    if (hr.userId === fromUserId && hr.status === HANDLE_STATUS.PENDING) {
+                        const oldUserId = hr.userId;
+                        const oldUserName = hr.userName;
+
+                        hr.userId = toUserId;
+                        hr.userName = toUser.name;
+                        hr.dept = toUser.dept;
+                        hr.transferredFrom = {
+                            userId: oldUserId,
+                            userName: oldUserName,
+                            time: now,
+                            operatorId: operator.id,
+                            operatorName: operator.name
+                        };
+
+                        transferred = true;
+                        transferDetail = hr.type === HANDLE_TYPES.MAIN ? '主办' : '协办';
+                        count++;
+
+                        transferStore.createTransferRecord({
+                            fromUserId: oldUserId,
+                            fromUserName: oldUserName,
+                            toUserId: toUserId,
+                            toUserName: toUser.name,
+                            type: TRANSFER_TYPES.DOC,
+                            itemId: doc.id,
+                            itemTitle: doc.title,
+                            remark: remark + (transferDetail ? `（${transferDetail}）` : ''),
+                            operatorId: operator.id,
+                            operatorName: operator.name,
+                            handleType: hr.type
+                        });
+                    }
+                });
+
+                if (transferred) {
+                    const mainHandler = getMainHandler(doc);
+                    if (mainHandler && mainHandler.userId === toUserId) {
+                        doc.assignedUser = toUserId;
+                        doc.assignedUserName = toUser.name;
+                        doc.assignedDept = toUser.dept;
+                    }
+                }
+            } else if (doc.assignedUser === fromUserId) {
+                const oldUserId = doc.assignedUser;
+                const oldUserName = doc.assignedUserName;
+
+                doc.assignedUser = toUserId;
+                doc.assignedUserName = toUser.name;
+                doc.assignedDept = toUser.dept;
+
+                if (doc.handleRecords && doc.handleRecords.length > 0) {
+                    const mainRecord = doc.handleRecords.find(r => r.type === HANDLE_TYPES.MAIN);
+                    if (mainRecord && mainRecord.status === HANDLE_STATUS.PENDING) {
+                        mainRecord.userId = toUserId;
+                        mainRecord.userName = toUser.name;
+                        mainRecord.dept = toUser.dept;
+                        mainRecord.transferredFrom = {
+                            userId: oldUserId,
+                            userName: oldUserName,
+                            time: now,
+                            operatorId: operator.id,
+                            operatorName: operator.name
+                        };
+                    }
+                }
+
+                transferred = true;
+                count++;
+
+                transferStore.createTransferRecord({
+                    fromUserId: oldUserId,
+                    fromUserName: oldUserName,
+                    toUserId: toUserId,
+                    toUserName: toUser.name,
+                    type: TRANSFER_TYPES.DOC,
+                    itemId: doc.id,
+                    itemTitle: doc.title,
+                    remark: remark,
+                    operatorId: operator.id,
+                    operatorName: operator.name,
+                    handleType: HANDLE_TYPES.MAIN
+                });
+            }
+        }
+
+        if (fromUser.role === ROLES.LEADER) {
+            const isLeaderPending = doc.currentNode === FLOW_NODES.PROPOSE || doc.currentNode === FLOW_NODES.ASSIGN;
+            if (isLeaderPending) {
+                transferred = true;
+                transferDetail = doc.currentNode === FLOW_NODES.PROPOSE ? '拟办批示' : '分办指派';
+                count++;
+
+                transferStore.createTransferRecord({
+                    fromUserId: fromUserId,
+                    fromUserName: fromUser.name,
+                    toUserId: toUserId,
+                    toUserName: toUser.name,
+                    type: TRANSFER_TYPES.DOC,
+                    itemId: doc.id,
+                    itemTitle: doc.title,
+                    remark: remark + (transferDetail ? `（${transferDetail}）` : ''),
+                    operatorId: operator.id,
+                    operatorName: operator.name,
+                    handleType: 'leader_review'
+                });
+
+                doc.transferRecords = doc.transferRecords || [];
+                doc.transferRecords.push({
+                    id: 'trans_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                    fromUserId: fromUserId,
+                    fromUserName: fromUser.name,
+                    toUserId: toUserId,
+                    toUserName: toUser.name,
+                    node: doc.currentNode,
+                    time: now,
+                    operatorId: operator.id,
+                    operatorName: operator.name,
+                    remark: remark,
+                    handleType: 'leader_review'
+                });
+            }
+        }
+
+        if (fromUser.role === ROLES.OFFICE) {
+            const isOfficePending = (doc.currentNode === FLOW_NODES.COMPLETE && !doc.archived) ||
+                (doc.isReturned && doc.currentNode === FLOW_NODES.REGISTER);
+
+            if (isOfficePending) {
+                transferred = true;
+                transferDetail = (doc.currentNode === FLOW_NODES.COMPLETE) ? '待归档' : '退回待重提';
+                count++;
+
+                transferStore.createTransferRecord({
+                    fromUserId: fromUserId,
+                    fromUserName: fromUser.name,
+                    toUserId: toUserId,
+                    toUserName: toUser.name,
+                    type: TRANSFER_TYPES.DOC,
+                    itemId: doc.id,
+                    itemTitle: doc.title,
+                    remark: remark + (transferDetail ? `（${transferDetail}）` : ''),
+                    operatorId: operator.id,
+                    operatorName: operator.name,
+                    handleType: 'office_work'
+                });
+
+                doc.transferRecords = doc.transferRecords || [];
+                doc.transferRecords.push({
+                    id: 'trans_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                    fromUserId: fromUserId,
+                    fromUserName: fromUser.name,
+                    toUserId: toUserId,
+                    toUserName: toUser.name,
+                    node: doc.currentNode,
+                    time: now,
+                    operatorId: operator.id,
+                    operatorName: operator.name,
+                    remark: remark,
+                    handleType: 'office_work'
+                });
+            }
+        }
+
+        if (transferred) {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.DOC_ASSIGNED,
+                title: '公文待办移交',
+                content: `《${doc.title}》已由 ${fromUser.name} 移交给您办理${transferDetail ? '（' + transferDetail + '）' : ''}`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toUserId: toUserId
+            });
+        }
+    });
+
+    if (count > 0) {
+        dataStore.save();
+    }
+
+    return count;
+}
+
+function transferDraftsToUser(fromUserId, toUserId, operator, remark = '') {
+    const fromUser = userStore.getUserById(fromUserId);
+    const toUser = userStore.getUserById(toUserId);
+    if (!fromUser || !toUser) return 0;
+
+    let count = 0;
+
+    dataStore.drafts.forEach(draft => {
+        if (draft.createdBy === fromUserId) {
+            const oldCreatedBy = draft.createdBy;
+            const oldCreatedByName = draft.createdByName;
+
+            draft.createdBy = toUserId;
+            draft.createdByName = toUser.name;
+            draft.transferredFrom = {
+                userId: oldCreatedBy,
+                userName: oldCreatedByName,
+                time: new Date().toISOString(),
+                operatorId: operator.id,
+                operatorName: operator.name
+            };
+
+            count++;
+
+            transferStore.createTransferRecord({
+                fromUserId: oldCreatedBy,
+                fromUserName: oldCreatedByName,
+                toUserId: toUserId,
+                toUserName: toUser.name,
+                type: TRANSFER_TYPES.DRAFT,
+                itemId: draft.id,
+                itemTitle: draft.title || '(无标题)',
+                remark: remark,
+                operatorId: operator.id,
+                operatorName: operator.name
+            });
+        }
+    });
+
+    if (count > 0) {
+        dataStore.saveDrafts();
+    }
+
+    return count;
+}
+
+function transferMessagesToUser(fromUserId, toUserId, fromUserRole, operator, remark = '') {
+    const fromUser = userStore.getUserById(fromUserId);
+    const toUser = userStore.getUserById(toUserId);
+    if (!fromUser || !toUser) return 0;
+
+    let count = 0;
+
+    messageStore.messages.forEach(msg => {
+        if (msg.read) return;
+
+        let shouldTransfer = false;
+        if (msg.toUserId === fromUserId) {
+            shouldTransfer = true;
+        } else if (msg.toRole && msg.toRole === fromUserRole && toUser.role === fromUserRole) {
+            shouldTransfer = false;
+        }
+
+        if (shouldTransfer) {
+            const oldToUserId = msg.toUserId;
+
+            msg.toUserId = toUserId;
+            msg.transferredFrom = {
+                userId: oldToUserId,
+                userName: fromUser.name,
+                time: new Date().toISOString(),
+                operatorId: operator.id,
+                operatorName: operator.name
+            };
+
+            count++;
+
+            transferStore.createTransferRecord({
+                fromUserId: oldToUserId,
+                fromUserName: fromUser.name,
+                toUserId: toUserId,
+                toUserName: toUser.name,
+                type: TRANSFER_TYPES.MESSAGE,
+                itemId: msg.id,
+                itemTitle: msg.title,
+                remark: remark,
+                operatorId: operator.id,
+                operatorName: operator.name
+            });
+        }
+    });
+
+    if (count > 0) {
+        messageStore.save();
+    }
+
+    return count;
+}
+
+function deleteUserWithTransfer(userId, toUserId, operator, options = {}) {
+    const user = userStore.getUserById(userId);
+    if (!user) {
+        return { success: false, error: '用户不存在' };
+    }
+
+    const pendingItems = getUserPendingItems(userId);
+    if (pendingItems.summary.total > 0 && !toUserId) {
+        return {
+            success: false,
+            error: '该人员有待办事项，需先完成移交',
+            pendingItems: pendingItems.summary
+        };
+    }
+
+    if (pendingItems.summary.total > 0 && toUserId) {
+        const transferResult = executeTransfer(userId, toUserId, operator, options);
+        if (!transferResult.success) {
+            return transferResult;
+        }
+    }
+
+    const deleteResult = userStore.deleteUser(userId);
+    if (!deleteResult.success) {
+        return deleteResult;
+    }
+
+    return {
+        success: true,
+        transferred: pendingItems.summary.total > 0,
+        transferSummary: pendingItems.summary
+    };
+}
