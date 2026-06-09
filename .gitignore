@@ -4,6 +4,8 @@ build/
 .cache/
 .parcel-cache/
 .vite/
+coverage/
+.nyc_output/
 
 *.log
 npm-debug.log*
