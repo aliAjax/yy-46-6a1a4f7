@@ -2960,6 +2960,7 @@ function renderDocDetail() {
         statusBadgeExtra += '<span class="return-badge">已退回</span>';
     }
     const pendingExt = getPendingExtension(doc);
+    const latestApprovedExt = getLatestApprovedExtension(doc);
     if (pendingExt) {
         statusBadgeExtra += '<span class="extension-badge">延期申请中</span>';
     }
@@ -3029,8 +3030,8 @@ function renderDocDetail() {
                         <span class="detail-value">
                             ${doc.deadline ? `
                                 <div>
-                                    ${getLatestApprovedExtension(doc) ? `
-                                        <div style="text-decoration: line-through; color: #999; font-size: 12px;">原期限：${formatDate(doc.deadline)}</div>
+                                    ${latestApprovedExt ? `
+                                        <div style="text-decoration: line-through; color: #999; font-size: 12px;">原期限：${formatDate(latestApprovedExt.originalDeadline)}</div>
                                         <div style="color: #1890ff; font-weight: 600;">当前期限：${formatDate(getEffectiveDeadline(doc))} ${renderRemainingTime(doc)}</div>
                                         <div style="font-size: 12px; color: #999; margin-top: 2px;">已延期 ${getExtensionCount(doc)} 次</div>
                                     ` : `
@@ -4181,7 +4182,7 @@ function refreshAfterExtensionChange() {
     } else if (currentPage === 'list') {
         renderDocList();
     } else if (currentPage === 'messages') {
-        renderMessages();
+        renderMessageList();
     }
 }
 

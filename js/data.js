@@ -575,6 +575,11 @@ function calculateDeadline(priority, assignTime) {
     return deadline.toISOString();
 }
 
+function formatDateForMessage(isoString) {
+    if (!isoString) return '-';
+    return new Date(isoString).toLocaleDateString('zh-CN');
+}
+
 function getDocStatusLabel(doc) {
     if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
         return '已办结';
@@ -1504,6 +1509,10 @@ class DataStore {
         if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) return false;
         if (!doc.deadline) return false;
         if (hasPendingExtension(doc)) return false;
+        const warningStatus = getWarningStatus(doc);
+        if (warningStatus !== WARNING_STATUS.APPROACHING && warningStatus !== WARNING_STATUS.OVERDUE) {
+            return false;
+        }
 
         if (role === ROLES.STAFF) {
             return isHandler(doc, user.id);
@@ -1587,6 +1596,7 @@ class DataStore {
         pendingExt.approverName = operator.name;
         pendingExt.approverDept = operator.dept;
         pendingExt.approvedAt = now;
+        doc.deadline = pendingExt.newDeadline;
 
         this.save();
 
@@ -1595,7 +1605,7 @@ class DataStore {
             messageStore.createMessage({
                 type: MESSAGE_TYPES.EXTENSION_APPROVED,
                 title: '延期申请已通过',
-                content: `《${doc.title}》延期申请已通过，新期限为${formatDate(pendingExt.newDeadline)}`,
+                content: `《${doc.title}》延期申请已通过，新期限为${formatDateForMessage(pendingExt.newDeadline)}`,
                 docId: doc.id,
                 docTitle: doc.title,
                 fromUserId: operator.id,
