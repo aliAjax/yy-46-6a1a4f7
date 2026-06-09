@@ -1316,6 +1316,7 @@ function renderArchiveTable() {
                     ${docs.map(doc => {
                         const completeRecord = doc.flowRecords.find(r => r.node === FLOW_NODES.COMPLETE);
                         const archiveTime = completeRecord ? completeRecord.time : doc.createdAt;
+                        const canUnarchive = dataStore.canUnarchive(doc, currentRole, currentUser);
                         return `
                         <tr>
                             <td>${doc.id}</td>
@@ -1325,7 +1326,10 @@ function renderArchiveTable() {
                             <td>${doc.assignedDept ? `<span class="dept-tag">${doc.assignedDept}</span>` : '-'}</td>
                             <td>${formatDate(archiveTime)}</td>
                             <td>
-                                <a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}', fromArchive: true})">查看详情</a>
+                                <div class="actions">
+                                    <a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}', fromArchive: true})">查看详情</a>
+                                    ${canUnarchive ? `<a class="action-link action-unarchive" onclick="quickUnarchive('${doc.id}')">退档重办</a>` : ''}
+                                </div>
                             </td>
                         </tr>
                     `;}).join('')}
@@ -1528,6 +1532,12 @@ function renderSupervisionTable() {
 function quickSupervise(docId) {
     currentDocId = docId;
     showSuperviseModal();
+}
+
+function quickUnarchive(docId) {
+    currentDocId = docId;
+    isArchiveDetail = true;
+    showUnarchiveModal();
 }
 
 function renderAttachmentCenter() {
@@ -2625,6 +2635,7 @@ function renderDocDetail() {
     const canSupervise = dataStore.canSupervise(doc, currentRole, currentUser) && !isArchiveDetail;
     const canReturn = dataStore.canReturn(doc, currentRole, currentUser) && !isArchiveDetail;
     const canResubmit = dataStore.canResubmit(doc, currentRole, currentUser) && !isArchiveDetail;
+    const canUnarchive = dataStore.canUnarchive(doc, currentRole, currentUser);
     const content = document.getElementById('contentArea');
 
     let actionButton = '';
@@ -2675,6 +2686,11 @@ function renderDocDetail() {
         superviseButton = `<button class="btn btn-warning" onclick="showSuperviseModal()">📢 督办</button>`;
     }
 
+    let unarchiveButton = '';
+    if (canUnarchive) {
+        unarchiveButton = `<button class="btn btn-warning" onclick="showUnarchiveModal()">↩️ 退档重办</button>`;
+    }
+
     const backPage = isArchiveDetail ? 'archive' : 'list';
     const backLabel = isArchiveDetail ? '返回归档库' : '返回列表';
 
@@ -2701,6 +2717,7 @@ function renderDocDetail() {
                 <button class="btn btn-default" onclick="navigateTo('${backPage}')" style="margin-right:8px;">${backLabel}</button>
                 ${returnButton ? returnButton + ' ' : ''}
                 ${superviseButton ? superviseButton + ' ' : ''}
+                ${unarchiveButton ? unarchiveButton + ' ' : ''}
                 ${actionButton}
             </div>
         </div>
@@ -2890,9 +2907,10 @@ function renderTimeline(doc) {
 
     nodes.forEach((node, index) => {
         const records = doc.flowRecords.filter(r => r.node === node);
-        const normalRecords = records.filter(r => !r.isReturn && !r.isResubmit);
+        const normalRecords = records.filter(r => !r.isReturn && !r.isResubmit && !r.isUnarchive);
         const returnRecords = records.filter(r => r.isReturn);
         const resubmitRecords = records.filter(r => r.isResubmit);
+        const unarchiveRecords = records.filter(r => r.isUnarchive);
         const hasNormal = normalRecords.length > 0;
         const isCurrent = doc.currentNode === node && !hasNormal && !doc.isReturned;
         const isReturnedCurrent = doc.currentNode === node && doc.isReturned;
@@ -2921,7 +2939,8 @@ function renderTimeline(doc) {
                 allRecords.forEach(record => {
                     const isReturn = record.isReturn;
                     const isResubmit = record.isResubmit;
-                    const recordClass = isReturn ? 'timeline-return-record' : (isResubmit ? 'timeline-resubmit-record' : 'timeline-normal-record');
+                    const isUnarchive = record.isUnarchive;
+                    const recordClass = isReturn ? 'timeline-return-record' : (isResubmit ? 'timeline-resubmit-record' : (isUnarchive ? 'timeline-unarchive-record' : 'timeline-normal-record'));
 
                     contentHtml += `<div class="${recordClass}" data-record-id="${record.id}">`;
 
@@ -2929,6 +2948,8 @@ function renderTimeline(doc) {
                         contentHtml += `<div class="timeline-record-label">↩️ 退回至${NODE_LABELS[record.returnToNode]}</div>`;
                     } else if (isResubmit) {
                         contentHtml += `<div class="timeline-record-label">↪️ 重提至${NODE_LABELS[record.resubmitToNode]}</div>`;
+                    } else if (isUnarchive) {
+                        contentHtml += `<div class="timeline-record-label">🔄 退档重办至${NODE_LABELS[record.unarchiveToNode]}</div>`;
                     }
 
                     contentHtml += `
@@ -2994,6 +3015,20 @@ function renderTimeline(doc) {
                     contentHtml += `
                         <div class="timeline-resubmit-record" data-record-id="${record.id}">
                             <div class="timeline-record-label">↪️ 重提至${NODE_LABELS[record.resubmitToNode]}</div>
+                            <div class="timeline-meta">
+                                ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
+                            </div>
+                            ${record.comment ? `<div class="timeline-comment">${record.comment}</div>` : ''}
+                        </div>
+                    `;
+                });
+            }
+
+            if (unarchiveRecords.length > 0 && node === FLOW_NODES.HANDLE && doc.isMultiDept) {
+                unarchiveRecords.forEach(record => {
+                    contentHtml += `
+                        <div class="timeline-unarchive-record" data-record-id="${record.id}">
+                            <div class="timeline-record-label">🔄 退档重办至${NODE_LABELS[record.unarchiveToNode]}</div>
                             <div class="timeline-meta">
                                 ${record.operatorName}（${record.operatorDept}） · ${formatDateTime(record.time)}
                             </div>
@@ -3716,6 +3751,62 @@ function submitReturn() {
     }
 }
 
+function showUnarchiveModal() {
+    const doc = dataStore.getDoc(currentDocId);
+    if (!doc) return;
+
+    document.getElementById('modalTitle').textContent = '退档重办公文';
+    document.getElementById('modalBody').innerHTML = `
+        <div class="return-info">
+            <p><strong>公文标题：</strong>${doc.title}</p>
+            <p><strong>文号：</strong>${doc.id}</p>
+            <p><strong>当前状态：</strong>已归档</p>
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>退回到节点</label>
+            <select class="form-select" id="unarchiveTargetNode">
+                <option value="${FLOW_NODES.PROPOSE}">拟办（领导批示）</option>
+                <option value="${FLOW_NODES.ASSIGN}">分办（领导分办）</option>
+                <option value="${FLOW_NODES.HANDLE}">承办（科室办理）</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label"><span class="required">*</span>退档原因</label>
+            <textarea class="form-textarea" id="unarchiveReason" rows="5" placeholder="请输入退档重办的原因..."></textarea>
+        </div>
+        <p style="color:#888; font-size:12px;">退档后将取消归档状态，恢复对应节点的操作权限，并通知相关人员。</p>
+        <div class="modal-footer" style="margin: 20px -24px -20px; padding: 14px 24px; border-top: 1px solid #f0f0f0;">
+            <button class="btn btn-default" onclick="closeModal()">取消</button>
+            <button class="btn btn-warning" onclick="submitUnarchive()">确认退档重办</button>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function submitUnarchive() {
+    const reason = document.getElementById('unarchiveReason').value.trim();
+    const targetNode = document.getElementById('unarchiveTargetNode').value;
+    if (!reason) {
+        showToast('请输入退档原因', 'error');
+        return;
+    }
+    if (!targetNode) {
+        showToast('请选择退回节点', 'error');
+        return;
+    }
+
+    const result = dataStore.unarchiveDoc(currentDocId, reason, targetNode, currentUser);
+    if (result) {
+        closeModal();
+        showToast('退档重办成功！');
+        isArchiveDetail = false;
+        renderDocDetail();
+        renderNav();
+    } else {
+        showToast('操作失败，请重试', 'error');
+    }
+}
+
 function showResubmitModal() {
     const doc = dataStore.getDoc(currentDocId);
     if (!doc) return;
@@ -4142,7 +4233,8 @@ function getMessageIcon(type) {
         [MESSAGE_TYPES.DOC_FEEDBACK]: '📤',
         [MESSAGE_TYPES.DOC_COMPLETED]: '✅',
         [MESSAGE_TYPES.DOC_ARCHIVED]: '📦',
-        [MESSAGE_TYPES.SUPERVISION]: '📢'
+        [MESSAGE_TYPES.SUPERVISION]: '📢',
+        [MESSAGE_TYPES.DOC_UNARCHIVED]: '🔄'
     };
     return icons[type] || '🔔';
 }
@@ -4165,7 +4257,8 @@ function renderMessageList() {
         { value: MESSAGE_TYPES.DOC_HANDLED, label: '办理中' },
         { value: MESSAGE_TYPES.DOC_FEEDBACK, label: '已反馈' },
         { value: MESSAGE_TYPES.DOC_COMPLETED, label: '待归档' },
-        { value: MESSAGE_TYPES.DOC_ARCHIVED, label: '已归档' }
+        { value: MESSAGE_TYPES.DOC_ARCHIVED, label: '已归档' },
+        { value: MESSAGE_TYPES.DOC_UNARCHIVED, label: '退档重办' }
     ];
 
     const filteredMessages = messageFilterType

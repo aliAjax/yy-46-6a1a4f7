@@ -669,6 +669,15 @@ body {
     border-left: 3px solid #52c41a;
 }
 
+.timeline-unarchive-record {
+    padding: 10px 12px;
+    margin: 8px 0;
+    background: #fff7e6;
+    border: 1px solid #ffd591;
+    border-radius: 6px;
+    border-left: 3px solid #fa8c16;
+}
+
 .timeline-record-label {
     font-weight: 600;
     font-size: 13px;
@@ -681,6 +690,10 @@ body {
 
 .timeline-resubmit-record .timeline-record-label {
     color: #52c41a;
+}
+
+.timeline-unarchive-record .timeline-record-label {
+    color: #fa8c16;
 }
 
 .timeline-content {
@@ -1271,6 +1284,7 @@ body {
 .message-icon.msg-doc_feedback { background: #f9f0ff; }
 .message-icon.msg-doc_completed { background: #fff1f0; }
 .message-icon.msg-doc_archived { background: #e6fffb; }
+.message-icon.msg-doc_unarchived { background: #fff7e6; }
 
 .message-content {
     flex: 1;
@@ -1578,6 +1592,11 @@ body {
 
 .action-supervise {
     color: #c41e3a !important;
+    font-weight: 600;
+}
+
+.action-unarchive {
+    color: #fa8c16 !important;
     font-weight: 600;
 }
 
@@ -2795,6 +2814,7 @@ body {
 .timeline-normal-record.timeline-highlight,
 .timeline-return-record.timeline-highlight,
 .timeline-resubmit-record.timeline-highlight,
+.timeline-unarchive-record.timeline-highlight,
 .handle-record-item.timeline-highlight {
     animation: timelineHighlight 3s ease;
     border-radius: 6px;

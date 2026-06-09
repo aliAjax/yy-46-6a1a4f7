@@ -748,6 +748,11 @@ class DataStore {
                 changed = true;
             }
 
+            if (doc.unarchiveRecords === undefined) {
+                doc.unarchiveRecords = [];
+                changed = true;
+            }
+
             if (doc.flowRecords) {
                 doc.flowRecords.forEach((record, idx) => {
                     if (!record.id) {
@@ -898,6 +903,7 @@ class DataStore {
             createdByName: creator.name,
             supervisionRecords: [],
             returnRecords: [],
+            unarchiveRecords: [],
             isReturned: false,
             flowRecords: [{
                 id: this.generateRecordId(docId),
@@ -1402,6 +1408,128 @@ class DataStore {
                 toUserId: doc.assignedUser
             });
         }
+
+        return doc;
+    }
+
+    canUnarchive(doc, role, user) {
+        if (!doc || !user) return false;
+        return role === ROLES.OFFICE && doc.currentNode === FLOW_NODES.COMPLETE && !!doc.archived;
+    }
+
+    unarchiveDoc(docId, reason, targetNode, operator) {
+        const doc = this.getDoc(docId);
+        if (!doc || !this.canUnarchive(doc, ROLES.OFFICE, operator)) return null;
+
+        const validTargets = [FLOW_NODES.PROPOSE, FLOW_NODES.ASSIGN, FLOW_NODES.HANDLE];
+        if (!validTargets.includes(targetNode)) return null;
+
+        if (targetNode === FLOW_NODES.HANDLE && !doc.assignedUser && (!doc.handleRecords || doc.handleRecords.length === 0)) {
+            return null;
+        }
+
+        const now = new Date().toISOString();
+        const unarchiveRecord = {
+            id: 'unarch_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            reason: reason,
+            targetNode: targetNode,
+            operatorId: operator.id,
+            operatorName: operator.name,
+            operatorDept: operator.dept,
+            time: now
+        };
+
+        doc.unarchiveRecords = doc.unarchiveRecords || [];
+        doc.unarchiveRecords.push(unarchiveRecord);
+
+        doc.flowRecords.push({
+            id: this.generateRecordId(docId),
+            node: FLOW_NODES.COMPLETE,
+            status: NODE_STATUS.RETURNED,
+            operatorId: operator.id,
+            operatorName: operator.name,
+            operatorDept: operator.dept,
+            time: now,
+            comment: reason,
+            attachments: [],
+            isUnarchive: true,
+            unarchiveToNode: targetNode
+        });
+
+        doc.archived = false;
+        doc.isReturned = false;
+        doc.currentNode = targetNode;
+
+        if (targetNode === FLOW_NODES.PROPOSE || targetNode === FLOW_NODES.ASSIGN) {
+            doc.assignedDept = null;
+            doc.assignedUser = null;
+            doc.assignedUserName = null;
+            doc.isMultiDept = false;
+            doc.handleRecords = [];
+            doc.deadline = null;
+        } else if (targetNode === FLOW_NODES.HANDLE) {
+            doc.handleRecords = doc.handleRecords || [];
+            doc.handleRecords.forEach(hr => {
+                hr.status = HANDLE_STATUS.PENDING;
+                hr.comment = '';
+                hr.attachments = [];
+                hr.submitTime = null;
+            });
+            doc.deadline = calculateDeadline(doc.priority, now);
+        }
+
+        this.save();
+
+        if (targetNode === FLOW_NODES.PROPOSE || targetNode === FLOW_NODES.ASSIGN) {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.DOC_UNARCHIVED,
+                title: '公文已退档重办',
+                content: `《${doc.title}》已退档重办，退至${NODE_LABELS[targetNode]}节点，请处理。退档原因：${reason}`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toRole: ROLES.LEADER
+            });
+        } else if (targetNode === FLOW_NODES.HANDLE) {
+            const handlerUserIds = getAllHandlerUserIds(doc);
+            handlerUserIds.forEach(userId => {
+                messageStore.createMessage({
+                    type: MESSAGE_TYPES.DOC_UNARCHIVED,
+                    title: '公文已退档重办',
+                    content: `《${doc.title}》已退档重办，退至承办节点，请重新办理。退档原因：${reason}`,
+                    docId: doc.id,
+                    docTitle: doc.title,
+                    fromUserId: operator.id,
+                    fromUserName: operator.name,
+                    toUserId: userId
+                });
+            });
+
+            if (handlerUserIds.length === 0 && doc.assignedUser) {
+                messageStore.createMessage({
+                    type: MESSAGE_TYPES.DOC_UNARCHIVED,
+                    title: '公文已退档重办',
+                    content: `《${doc.title}》已退档重办，退至承办节点，请重新办理。退档原因：${reason}`,
+                    docId: doc.id,
+                    docTitle: doc.title,
+                    fromUserId: operator.id,
+                    fromUserName: operator.name,
+                    toUserId: doc.assignedUser
+                });
+            }
+        }
+
+        messageStore.createMessage({
+            type: MESSAGE_TYPES.DOC_UNARCHIVED,
+            title: '公文已退档重办',
+            content: `《${doc.title}》已退档重办，退至${NODE_LABELS[targetNode]}节点。退档原因：${reason}`,
+            docId: doc.id,
+            docTitle: doc.title,
+            fromUserId: operator.id,
+            fromUserName: operator.name,
+            toRole: ROLES.OFFICE
+        });
 
         return doc;
     }
@@ -2768,7 +2896,8 @@ const MESSAGE_TYPES = {
     DOC_ARCHIVED: 'doc_archived',
     SUPERVISION: 'supervision',
     DOC_RETURNED: 'doc_returned',
-    DOC_RESUBMITTED: 'doc_resubmitted'
+    DOC_RESUBMITTED: 'doc_resubmitted',
+    DOC_UNARCHIVED: 'doc_unarchived'
 };
 
 const MESSAGE_TYPE_LABELS = {
@@ -2780,7 +2909,8 @@ const MESSAGE_TYPE_LABELS = {
     [MESSAGE_TYPES.DOC_ARCHIVED]: '已归档',
     [MESSAGE_TYPES.SUPERVISION]: '督办',
     [MESSAGE_TYPES.DOC_RETURNED]: '已退回',
-    [MESSAGE_TYPES.DOC_RESUBMITTED]: '已重提'
+    [MESSAGE_TYPES.DOC_RESUBMITTED]: '已重提',
+    [MESSAGE_TYPES.DOC_UNARCHIVED]: '退档重办'
 };
 
 const MESSAGE_STORAGE_KEY = 'doc_flow_messages';
