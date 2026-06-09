@@ -4929,3 +4929,340 @@ code {
     justify-content: flex-end;
     gap: 8px;
 }
+
+.btn-xs {
+    padding: 3px 8px;
+    font-size: 12px;
+    border-radius: 4px;
+}
+
+.row-actions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.row-edit-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.import-preview-table .row-editing {
+    background: #e6f7ff;
+}
+
+.import-preview-table .row-corrected {
+    background: linear-gradient(90deg, #fffbe6 0%, transparent 100%);
+}
+
+.import-preview-table .row-corrected:hover {
+    background: #fff1b8 !important;
+}
+
+.import-preview-table .row-editing:hover {
+    background: #bae7ff !important;
+}
+
+.edit-input {
+    width: 100%;
+    min-width: 100px;
+}
+
+.correction-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #fff7e6;
+    color: #d46b08;
+    border: 1px solid #ffd591;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: help;
+}
+
+.correction-list {
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: #fffbe6;
+    border: 1px solid #ffe58f;
+    border-radius: 4px;
+}
+
+.correction-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #d46b08;
+    margin-bottom: 4px;
+}
+
+.correction-item {
+    font-size: 12px;
+    color: #666;
+    line-height: 1.6;
+    padding: 2px 0;
+}
+
+.correction-field {
+    font-weight: 500;
+    color: #333;
+}
+
+.correction-old {
+    color: #f5222d;
+    text-decoration: line-through;
+}
+
+.correction-arrow {
+    margin: 0 4px;
+    color: #999;
+}
+
+.correction-new {
+    color: #52c41a;
+    font-weight: 500;
+}
+
+.cell-display {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.td-ellipsis {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.coop-status-main-pending {
+    background: #e6f7ff;
+    color: #1890ff;
+}
+
+.coop-status-co-pending {
+    background: #fff7e6;
+    color: #fa8c16;
+}
+
+.coop-status-co-completed {
+    background: #f6ffed;
+    color: #52c41a;
+}
+
+.coop-status-main-summary {
+    background: #f9f0ff;
+    color: #722ed1;
+}
+
+.handle-status.summary {
+    background: #f9f0ff;
+    color: #722ed1;
+}
+
+.handle-status.waiting {
+    background: #e6f7ff;
+    color: #1890ff;
+}
+
+.coop-stats-grid {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+
+.coop-stats-grid .stat-card {
+    transition: all 0.25s ease;
+    cursor: pointer;
+}
+
+.coop-stats-grid .stat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.stat-icon.purple { background: #f9f0ff; }
+.stat-icon.cyan { background: #e6fffb; }
+.stat-icon.green-light { background: #f6ffed; }
+.stat-icon.yellow { background: #fffbe6; }
+
+.handlers-status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 4px;
+}
+
+.handler-status-card {
+    background: #fafafa;
+    border: 1px solid #e8e8e8;
+    border-radius: 8px;
+    padding: 12px 16px;
+    transition: all 0.2s;
+}
+
+.handler-status-card.completed {
+    border-color: #b7eb8f;
+    background: linear-gradient(135deg, #fcffe6 0%, #ffffff 100%);
+}
+
+.handler-status-card.pending {
+    border-color: #ffd591;
+    background: linear-gradient(135deg, #fffbe6 0%, #ffffff 100%);
+}
+
+.handler-status-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.handler-status-header .handle-type-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.handler-status-header .handle-type-badge.main {
+    background: #e6f7ff;
+    color: #1890ff;
+}
+
+.handler-status-header .handle-type-badge.co {
+    background: #fff7e6;
+    color: #d48806;
+}
+
+.handler-dept {
+    font-weight: 600;
+    color: #333;
+    font-size: 14px;
+}
+
+.handler-name {
+    color: #666;
+    font-size: 13px;
+}
+
+.handler-status-badge {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+    margin-left: auto;
+}
+
+.handler-status-badge.done {
+    background: #f6ffed;
+    color: #52c41a;
+    border: 1px solid #b7eb8f;
+}
+
+.handler-status-badge.wait {
+    background: #fff1f0;
+    color: #f5222d;
+    border: 1px solid #ffa39e;
+}
+
+.handler-submit-time {
+    font-size: 12px;
+    color: #888;
+    margin-top: 6px;
+    padding-left: 2px;
+}
+
+.handler-feedback-content {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: #fff;
+    border-radius: 6px;
+    border: 1px solid #f0f0f0;
+}
+
+.feedback-label {
+    font-size: 12px;
+    color: #666;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.feedback-text {
+    font-size: 13px;
+    color: #333;
+    line-height: 1.6;
+    white-space: pre-wrap;
+}
+
+.handler-feedback-attachments {
+    margin-top: 10px;
+}
+
+.handler-pending-tip {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: #fffbe6;
+    border: 1px solid #ffe58f;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #ad6800;
+}
+
+.handler-pending-tip.main-summary {
+    background: #f9f0ff;
+    border-color: #d3adf7;
+    color: #531dab;
+}
+
+.multi-handle-progress {
+    padding: 8px 12px 12px;
+    margin-bottom: 8px;
+    border-bottom: 1px dashed #e8e8e8;
+}
+
+.handle-submit-time {
+    padding: 0 12px;
+    font-size: 12px;
+    color: #888;
+}
+
+.msg-doc_assigned_main {
+    background: #e6f7ff !important;
+}
+
+.msg-doc_assigned_co {
+    background: #fff7e6 !important;
+}
+
+.msg-doc_co_feedback {
+    background: #f6ffed !important;
+}
+
+.msg-doc_co_all_feedback {
+    background: #d9f7be !important;
+}
+
+.msg-doc_main_summary {
+    background: #f9f0ff !important;
+}
+
+@media (max-width: 768px) {
+    .coop-stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    .preview-stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    .row-actions,
+    .row-edit-actions {
+        flex-direction: column;
+    }
+}

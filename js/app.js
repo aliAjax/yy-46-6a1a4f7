@@ -14,6 +14,8 @@ let isArchiveDetail = false;
 
 let currentImportBatchId = null;
 let currentImportFilters = {};
+let editingImportRow = null;
+let currentPreviewTab = 'all';
 
 let currentAttachmentFilters = {};
 
@@ -216,6 +218,8 @@ function navigateTo(page, params = {}) {
             break;
         case 'batchImportPreview':
             currentImportBatchId = params.batchId;
+            editingImportRow = null;
+            currentPreviewTab = 'all';
             renderBatchImportPreview();
             break;
         case 'batchImportResult':
@@ -277,6 +281,7 @@ function renderDashboard() {
             <h2 class="page-title">工作台</h2>
         </div>
 
+        ${currentRole === ROLES.STAFF ? `
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-icon blue">📊</div>
@@ -307,6 +312,68 @@ function renderDashboard() {
                 </div>
             </div>
         </div>
+        <div class="stats-grid coop-stats-grid">
+            <div class="stat-card coop-stat-card" onclick="navigateTo('list', {filters: {myCoopStatus: 'main_pending'}})">
+                <div class="stat-icon purple">👔</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.myMainPending}</div>
+                    <div class="stat-label">主办待处理</div>
+                </div>
+            </div>
+            <div class="stat-card coop-stat-card" onclick="navigateTo('list', {filters: {myCoopStatus: 'co_pending'}})">
+                <div class="stat-icon cyan">🤝</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.myCoPending}</div>
+                    <div class="stat-label">协办待处理</div>
+                </div>
+            </div>
+            <div class="stat-card coop-stat-card" onclick="navigateTo('list', {filters: {myCoopStatus: 'co_completed'}})">
+                <div class="stat-icon green-light">✓</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.myCoCompleted}</div>
+                    <div class="stat-label">协办已反馈</div>
+                </div>
+            </div>
+            <div class="stat-card coop-stat-card" onclick="navigateTo('list', {filters: {myCoopStatus: 'main_summary'}})">
+                <div class="stat-icon yellow">📋</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.myMainSummaryPending}</div>
+                    <div class="stat-label">主办待汇总</div>
+                </div>
+            </div>
+        </div>
+        ` : `
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon blue">📊</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.total}</div>
+                    <div class="stat-label">公文总数</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange">⏳</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.processing}</div>
+                    <div class="stat-label">办理中</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green">✅</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.completed}</div>
+                    <div class="stat-label">已办结</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon red">📌</div>
+                <div class="stat-info">
+                    <div class="stat-number">${stats.myPending}</div>
+                    <div class="stat-label">待我处理</div>
+                </div>
+            </div>
+        </div>
+        `}
 
         <div class="stats-grid warning-stats">
             <div class="stat-card warning-card-normal">
@@ -413,7 +480,7 @@ function renderDashboard() {
                                     <tr>
                                         <td>${doc.id}</td>
                                         <td class="td-ellipsis" title="${doc.title}">${doc.title}</td>
-                                        <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
+                                        <td><span class="status-badge ${getDocStatusClass(doc, currentUser && currentUser.id)}">${getDocStatusLabel(doc, currentUser && currentUser.id)}</span></td>
                                         <td><a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">办理</a></td>
                                     </tr>
                                 `).join('')}
@@ -476,7 +543,7 @@ function renderDashboard() {
                                     <td>${doc.id}</td>
                                     <td>${doc.title}</td>
                                     <td>${doc.fromUnit}</td>
-                                    <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
+                                    <td><span class="status-badge ${getDocStatusClass(doc, currentUser && currentUser.id)}">${getDocStatusLabel(doc, currentUser && currentUser.id)}</span></td>
                                     <td>${formatDate(doc.createdAt)}</td>
                                     <td><a class="action-link" onclick="navigateTo('detail', {id: '${doc.id}'})">查看</a></td>
                                 </tr>
@@ -543,12 +610,21 @@ function renderDocList() {
         { value: '__none__', label: '未分类' }
     ];
 
+    const myCoopStatusOptions = [
+        { value: '', label: '全部协办状态' },
+        { value: 'main_pending', label: '主办待处理' },
+        { value: 'co_pending', label: '协办待处理' },
+        { value: 'co_completed', label: '协办已反馈' },
+        { value: 'main_summary', label: '主办待汇总' }
+    ];
+
     const kw = currentFilters.keyword || '';
     const status = currentFilters.status || '';
     const mode = currentFilters.isMultiDept === true ? 'multi' : (currentFilters.isMultiDept === false ? 'single' : '');
     const dept = currentFilters.assignedDept || '';
     const priority = currentFilters.priority || '';
     const category = currentFilters.category || '';
+    const myCoopStatus = currentFilters.myCoopStatus || '';
     const startDate = currentFilters.startDate || '';
     const endDate = currentFilters.endDate || '';
 
@@ -622,6 +698,14 @@ function renderDocList() {
                             ${modeOptions.map(o => `<option value="${o.value}" ${o.value === mode ? 'selected' : ''}>${o.label}</option>`).join('')}
                         </select>
                     </div>
+                    ${currentRole === ROLES.STAFF ? `
+                    <div class="form-group">
+                        <label class="form-label">我的协办状态</label>
+                        <select class="form-select" id="searchMyCoopStatus" onchange="applyFilters()">
+                            ${myCoopStatusOptions.map(o => `<option value="${o.value}" ${o.value === myCoopStatus ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    ` : ''}
                     <div class="form-group">
                         <label class="form-label">登记开始日期</label>
                         <input type="date" class="form-input" id="searchStartDate" value="${startDate}" onchange="applyFilters()">
@@ -655,6 +739,8 @@ function applyFilters() {
         isMultiDept = false;
     }
 
+    const myCoopStatusEl = document.getElementById('searchMyCoopStatus');
+
     currentFilters = {
         keyword: document.getElementById('searchKeyword').value.trim(),
         status: document.getElementById('searchStatus').value,
@@ -663,7 +749,8 @@ function applyFilters() {
         category: document.getElementById('searchCategory').value,
         startDate: document.getElementById('searchStartDate').value,
         endDate: document.getElementById('searchEndDate').value,
-        isMultiDept: isMultiDept
+        isMultiDept: isMultiDept,
+        myCoopStatus: myCoopStatusEl ? myCoopStatusEl.value : ''
     };
     currentFilterViewId = null;
     updateFilterViewTabs();
@@ -679,6 +766,8 @@ function resetFilters() {
     document.getElementById('searchPriority').value = '';
     document.getElementById('searchCategory').value = '';
     document.getElementById('searchMode').value = '';
+    const myCoopStatusEl = document.getElementById('searchMyCoopStatus');
+    if (myCoopStatusEl) myCoopStatusEl.value = '';
     document.getElementById('searchStartDate').value = '';
     document.getElementById('searchEndDate').value = '';
     updateFilterViewTabs();
@@ -717,6 +806,9 @@ function applyFilterView(viewId) {
     if (document.getElementById('searchMode')) {
         const modeVal = currentFilters.isMultiDept === true ? 'multi' : (currentFilters.isMultiDept === false ? 'single' : '');
         document.getElementById('searchMode').value = modeVal;
+    }
+    if (document.getElementById('searchMyCoopStatus')) {
+        document.getElementById('searchMyCoopStatus').value = currentFilters.myCoopStatus || '';
     }
     if (document.getElementById('searchStartDate')) {
         document.getElementById('searchStartDate').value = currentFilters.startDate || '';
@@ -765,7 +857,10 @@ function openSaveViewModal(viewId) {
             currentFilters.keyword ||
             currentFilters.status ||
             currentFilters.assignedDept ||
-            currentFilters.priority
+            currentFilters.priority ||
+            currentFilters.myCoopStatus ||
+            currentFilters.category ||
+            currentFilters.isMultiDept !== undefined
         );
         if (!hasFilters) {
             showToast('请先设置筛选条件再保存视图', 'warning');
@@ -776,11 +871,22 @@ function openSaveViewModal(viewId) {
     const filters = isEdit ? view.filters : currentFilters;
     const name = isEdit ? view.name : '';
 
+    const myCoopStatusLabel = {
+        'main_pending': '主办待处理',
+        'co_pending': '协办待处理',
+        'co_completed': '协办已反馈',
+        'main_summary': '主办待汇总'
+    };
+    const modeDisplay = filters.isMultiDept === true ? '多科室协办' : (filters.isMultiDept === false ? '单科室承办' : '');
+
     const filterOptions = [
         { key: 'keyword', label: '关键词（标题/文号）', value: filters.keyword || '', displayValue: filters.keyword || '' },
         { key: 'status', label: '状态', value: filters.status || '', displayValue: filters.status ? getStatusLabelByNode(filters.status) : '' },
         { key: 'assignedDept', label: '承办科室', value: filters.assignedDept || '', displayValue: filters.assignedDept || '' },
-        { key: 'priority', label: '紧急程度', value: filters.priority || '', displayValue: filters.priority ? (PRIORITY_LABELS[filters.priority] || filters.priority) : '' }
+        { key: 'priority', label: '紧急程度', value: filters.priority || '', displayValue: filters.priority ? (PRIORITY_LABELS[filters.priority] || filters.priority) : '' },
+        { key: 'category', label: '公文类别', value: filters.category || '', displayValue: filters.category || '' },
+        { key: 'isMultiDept', label: '办理方式', value: filters.isMultiDept !== undefined ? filters.isMultiDept : '', displayValue: modeDisplay },
+        { key: 'myCoopStatus', label: '我的协办状态', value: filters.myCoopStatus || '', displayValue: filters.myCoopStatus ? (myCoopStatusLabel[filters.myCoopStatus] || filters.myCoopStatus) : '' }
     ];
 
     modalTitle.textContent = isEdit ? '编辑筛选视图' : '保存筛选视图';
@@ -950,7 +1056,11 @@ function deleteFilterView(viewId) {
 }
 
 function renderDocTable() {
-    const docs = dataStore.listDocs(currentFilters);
+    const filters = { ...currentFilters };
+    if (currentUser) {
+        filters.currentUserId = currentUser.id;
+    }
+    const docs = dataStore.listDocs(filters);
 
     if (docs.length === 0) {
         return '<div class="empty-state"><div class="empty-icon">📭</div><p>暂无符合条件的公文</p></div>';
@@ -1015,7 +1125,7 @@ function renderDocTable() {
                             <td>${doc.title}</td>
                             <td>${doc.fromUnit}</td>
                             <td>${getPriorityLabel(doc.priority)}</td>
-                            <td><span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span></td>
+                            <td><span class="status-badge ${getDocStatusClass(doc, currentUser && currentUser.id)}">${getDocStatusLabel(doc, currentUser && currentUser.id)}</span></td>
                             <td>${modeBadge}</td>
                             <td>${remainingHtml}</td>
                             <td>${warningBadgeHtml}</td>
@@ -2992,7 +3102,7 @@ function renderDocDetail() {
                 <div style="display:flex; align-items:center; gap:8px;">
                     ${statusBadgeExtra}
                     ${warningBadge}
-                    <span class="status-badge ${getDocStatusClass(doc)}">${getDocStatusLabel(doc)}</span>
+                    <span class="status-badge ${getDocStatusClass(doc, currentUser && currentUser.id)}">${getDocStatusLabel(doc, currentUser && currentUser.id)}</span>
                 </div>
             </div>
             <div class="card-body">
@@ -3064,21 +3174,6 @@ function renderDocDetail() {
                         <span class="detail-label">主办人</span>
                         <span class="detail-value">${doc.assignedUserName || '-'}</span>
                     </div>
-                    <div class="detail-item full-width">
-                        <span class="detail-label">协办科室（${getCoHandlers(doc).length}个）</span>
-                        <span class="detail-value">
-                            <div class="co-dept-list">
-                                ${getCoHandlers(doc).map(co => `
-                                    <span class="dept-tag co-dept">
-                                        ${co.dept} - ${co.userName}
-                                        <span class="co-status ${co.status === HANDLE_STATUS.COMPLETED ? 'completed' : 'pending'}">
-                                            ${co.status === HANDLE_STATUS.COMPLETED ? '已完成' : '待办理'}
-                                        </span>
-                                    </span>
-                                `).join('')}
-                            </div>
-                        </span>
-                    </div>
                     <div class="detail-item">
                         <span class="detail-label">协办进度</span>
                         <span class="detail-value">
@@ -3086,6 +3181,75 @@ function renderDocDetail() {
                                 <div class="progress-fill" style="width: ${getCoHandleProgress(doc).percent}%"></div>
                             </div>
                             <span class="progress-text">${getCoHandleProgress(doc).completed}/${getCoHandleProgress(doc).total} 已完成</span>
+                        </span>
+                    </div>
+                    <div class="detail-item full-width">
+                        <span class="detail-label">办理状态详情（${doc.handleRecords.length}个承办人）</span>
+                        <span class="detail-value">
+                            <div class="handlers-status-list">
+                                ${doc.handleRecords.map(hr => {
+                                    const isMain = hr.type === HANDLE_TYPES.MAIN;
+                                    const isCompleted = hr.status === HANDLE_STATUS.COMPLETED;
+                                    const canViewFeedback = isMainHandler(doc, currentUser && currentUser.id) || 
+                                                          (currentUser && currentUser.id === hr.userId) ||
+                                                          currentRole === ROLES.LEADER ||
+                                                          currentRole === ROLES.OFFICE;
+                                    let subStatusLabel = '';
+                                    if (isMain) {
+                                        if (doc.currentNode === FLOW_NODES.FEEDBACK || allCoHandlersCompleted(doc)) {
+                                            subStatusLabel = isCompleted ? '已汇总' : '待汇总';
+                                        } else {
+                                            subStatusLabel = '等待协办反馈';
+                                        }
+                                    } else {
+                                        subStatusLabel = isCompleted ? '已反馈' : '待反馈';
+                                    }
+                                    return `
+                                        <div class="handler-status-card ${isCompleted ? 'completed' : 'pending'}">
+                                            <div class="handler-status-header">
+                                                <span class="handle-type-badge ${isMain ? 'main' : 'co'}">${isMain ? '主办' : '协办'}</span>
+                                                <span class="handler-dept">${hr.dept}</span>
+                                                <span class="handler-name">${hr.userName}</span>
+                                                <span class="handler-status-badge ${isCompleted ? 'done' : 'wait'}">${subStatusLabel}</span>
+                                            </div>
+                                            ${hr.submitTime ? `<div class="handler-submit-time">提交时间：${formatDateTime(hr.submitTime)}</div>` : ''}
+                                            ${canViewFeedback && isCompleted && hr.comment ? `
+                                                <div class="handler-feedback-content">
+                                                    <div class="feedback-label">反馈意见：</div>
+                                                    <div class="feedback-text">${escapeHtml(hr.comment)}</div>
+                                                </div>
+                                            ` : ''}
+                                            ${canViewFeedback && isCompleted && hr.attachments && hr.attachments.length > 0 ? `
+                                                <div class="handler-feedback-attachments">
+                                                    <div class="feedback-label">反馈附件（${hr.attachments.length}个）：</div>
+                                                    <div class="attachment-list">
+                                                        ${hr.attachments.map(a => `
+                                                            <div class="attachment-item attachment-item-detail">
+                                                                <div class="attachment-item-main">
+                                                                    <span class="attachment-icon">${getFileIcon(a.name)}</span>
+                                                                    <span class="attachment-name" title="${a.name}">${a.name}</span>
+                                                                    <span class="attachment-size">${a.size}</span>
+                                                                    <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                                                </div>
+                                                                ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
+                                                            </div>
+                                                        `).join('')}
+                                                    </div>
+                                                </div>
+                                            ` : ''}
+                                            ${!isCompleted && !isMain && currentUser && currentUser.id === hr.userId ? `
+                                                <div class="handler-pending-tip">您尚未提交协办意见，请尽快办理。</div>
+                                            ` : ''}
+                                            ${!isCompleted && isMain && currentUser && currentUser.id === hr.userId && allCoHandlersCompleted(doc) ? `
+                                                <div class="handler-pending-tip main-summary">所有协办已反馈，请您汇总后提交最终反馈。</div>
+                                            ` : ''}
+                                            ${!isCompleted && isMain && currentUser && currentUser.id === hr.userId && !allCoHandlersCompleted(doc) ? `
+                                                <div class="handler-pending-tip">等待协办科室反馈中，已完成 ${getCoHandleProgress(doc).completed}/${getCoHandleProgress(doc).total}。</div>
+                                            ` : ''}
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
                         </span>
                     </div>
                     ` : `
@@ -3471,6 +3635,8 @@ function renderTimeline(doc) {
 
 function renderMultiHandleTimelineContent(doc, records) {
     const handleRecords = doc.handleRecords || [];
+    const allCoCompleted = allCoHandlersCompleted(doc);
+    const coProgress = getCoHandleProgress(doc);
 
     let recordsHtml = handleRecords.map(hr => {
         const isMain = hr.type === HANDLE_TYPES.MAIN;
@@ -3488,50 +3654,94 @@ function renderMultiHandleTimelineContent(doc, records) {
             `;
         }
 
+        let subStatusLabel = '';
+        let subStatusClass = '';
+        if (isMain) {
+            if (doc.currentNode === FLOW_NODES.FEEDBACK || allCoCompleted) {
+                subStatusLabel = isCompleted ? '已汇总办结' : '待汇总反馈';
+                subStatusClass = isCompleted ? 'done' : 'summary';
+            } else {
+                subStatusLabel = `等待协办反馈（${coProgress.completed}/${coProgress.total}）`;
+                subStatusClass = 'waiting';
+            }
+        } else {
+            subStatusLabel = isCompleted ? '已反馈' : '待反馈';
+            subStatusClass = isCompleted ? 'done' : 'wait';
+        }
+
+        const canViewFeedback = isMainHandler(doc, currentUser && currentUser.id) || 
+                              (currentUser && currentUser.id === hr.userId) ||
+                              currentRole === ROLES.LEADER ||
+                              currentRole === ROLES.OFFICE;
+
         return `
             <div class="handle-record-item ${isCompleted ? 'completed' : 'pending'}" ${flowRecord ? `data-record-id="${flowRecord.id}"` : ''}>
                 <div class="handle-record-header">
                     <span class="handle-type-badge ${isMain ? 'main' : 'co'}">${isMain ? '主办' : '协办'}</span>
                     <span class="handle-dept">${hr.dept}</span>
                     <span class="handle-name">${hr.userName}</span>
-                    <span class="handle-status ${isCompleted ? 'done' : 'wait'}">
-                        ${isCompleted ? '已完成' : '待办理'}
+                    <span class="handle-status ${subStatusClass}">
+                        ${subStatusLabel}
                     </span>
                 </div>
                 ${transferInfoHtml}
-                ${isCompleted && flowRecord ? `
+                ${hr.submitTime ? `<div class="handle-submit-time" style="padding: 0 12px; font-size: 12px; color: #888;">提交时间：${formatDateTime(hr.submitTime)}</div>` : ''}
+                ${isCompleted && canViewFeedback && hr.comment ? `
                     <div class="handle-record-body">
-                        <div class="timeline-meta">${formatDateTime(flowRecord.time)}</div>
-                        ${flowRecord.comment ? `<div class="timeline-comment">${flowRecord.comment}</div>` : ''}
-                        ${flowRecord.attachments && flowRecord.attachments.length > 0 ? `
-                            <div class="timeline-attachment">
-                                <div style="font-size:12px; color:#888; margin-bottom:8px;">
-                                    附件（${flowRecord.attachments.length}个）
-                                    <span style="margin-left:8px; color:#aaa;">上传人：${flowRecord.operatorName}</span>
-                                </div>
-                                ${flowRecord.attachments.map(a => `
-                                    <div class="attachment-item timeline-attachment-item timeline-attachment-item-extended">
-                                        <div class="attachment-item-main">
-                                            <span class="attachment-icon">${getFileIcon(a.name)}</span>
-                                            <span class="attachment-name" title="${a.name}">${a.name}</span>
-                                            <span class="attachment-size">${a.size}</span>
-                                            <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
-                                            <span class="att-category-badge att-cat-${a.category || ATTACHMENT_CATEGORIES.OTHER}">${getAttachmentCategoryLabel(a.category)}</span>
-                                        </div>
-                                        ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
-                                    </div>
-                                `).join('')}
+                        <div class="feedback-label" style="padding: 8px 12px 0; font-size: 12px; color: #666; font-weight: 500;">反馈意见：</div>
+                        <div class="timeline-comment" style="margin: 4px 12px 0;">${escapeHtml(hr.comment)}</div>
+                    </div>
+                ` : ''}
+                ${isCompleted && canViewFeedback && hr.attachments && hr.attachments.length > 0 ? `
+                    <div class="handle-record-body">
+                        <div class="timeline-attachment" style="padding: 8px 12px;">
+                            <div style="font-size:12px; color:#888; margin-bottom:8px;">
+                                反馈附件（${hr.attachments.length}个）
+                                <span style="margin-left:8px; color:#aaa;">上传人：${hr.userName}</span>
                             </div>
-                        ` : ''}
+                            ${hr.attachments.map(a => `
+                                <div class="attachment-item timeline-attachment-item timeline-attachment-item-extended">
+                                    <div class="attachment-item-main">
+                                        <span class="attachment-icon">${getFileIcon(a.name)}</span>
+                                        <span class="attachment-name" title="${a.name}">${a.name}</span>
+                                        <span class="attachment-size">${a.size}</span>
+                                        <span class="file-type-badge file-type-${getFileType(a.name)}">${getFileTypeLabel(a.name)}</span>
+                                        <span class="att-category-badge att-cat-${a.category || ATTACHMENT_CATEGORIES.OTHER}">${getAttachmentCategoryLabel(a.category)}</span>
+                                    </div>
+                                    ${a.remark ? `<div class="attachment-item-remark"><span class="remark-label">备注：</span>${escapeHtml(a.remark)}</div>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                ${!isCompleted && currentUser && currentUser.id === hr.userId ? `
+                    <div class="handle-record-body">
+                        <div class="handler-pending-tip" style="margin: 8px 12px;">
+                            ${isMain ? (allCoCompleted ? '所有协办已反馈，请您汇总后提交最终反馈。' : `等待协办科室反馈中，已完成 ${coProgress.completed}/${coProgress.total}。`) : '您尚未提交反馈意见，请尽快办理。'}
+                        </div>
                     </div>
                 ` : ''}
             </div>
         `;
     }).join('');
 
+    const progressHtml = `
+        <div class="multi-handle-progress" style="padding: 8px 12px 12px; margin-bottom: 8px; border-bottom: 1px dashed #e8e8e8;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 12px; color: #666;">协办进度：</span>
+                <div class="progress-bar" style="flex: 1; max-width: 300px;">
+                    <div class="progress-fill" style="width: ${coProgress.percent}%"></div>
+                </div>
+                <span style="font-size: 12px; color: #1890ff; font-weight: 500;">${coProgress.completed}/${coProgress.total} 已反馈</span>
+                ${allCoCompleted ? '<span style="font-size: 12px; color: #52c41a; font-weight: 500;">✓ 全部完成</span>' : ''}
+            </div>
+        </div>
+    `;
+
     return `
         <div class="timeline-content">
             <div class="timeline-title">${NODE_LABELS[FLOW_NODES.HANDLE]} <span class="badge-multi">多科室协办</span></div>
+            ${progressHtml}
             <div class="handle-records-list">
                 ${recordsHtml}
             </div>
@@ -4814,11 +5024,18 @@ function getMessageIcon(type) {
     const icons = {
         [MESSAGE_TYPES.NEW_DOC_PROPOSE]: '📝',
         [MESSAGE_TYPES.DOC_ASSIGNED]: '📋',
+        [MESSAGE_TYPES.DOC_ASSIGNED_MAIN]: '👔',
+        [MESSAGE_TYPES.DOC_ASSIGNED_CO]: '🤝',
         [MESSAGE_TYPES.DOC_HANDLED]: '⚙️',
+        [MESSAGE_TYPES.DOC_CO_FEEDBACK]: '📨',
+        [MESSAGE_TYPES.DOC_CO_ALL_FEEDBACK]: '📬',
         [MESSAGE_TYPES.DOC_FEEDBACK]: '📤',
+        [MESSAGE_TYPES.DOC_MAIN_SUMMARY]: '📑',
         [MESSAGE_TYPES.DOC_COMPLETED]: '✅',
         [MESSAGE_TYPES.DOC_ARCHIVED]: '📦',
         [MESSAGE_TYPES.SUPERVISION]: '📢',
+        [MESSAGE_TYPES.DOC_RETURNED]: '↩️',
+        [MESSAGE_TYPES.DOC_RESUBMITTED]: '↪️',
         [MESSAGE_TYPES.EXTENSION_REQUEST]: '⏳',
         [MESSAGE_TYPES.EXTENSION_APPROVED]: '✅',
         [MESSAGE_TYPES.EXTENSION_REJECTED]: '❌'
@@ -4872,12 +5089,19 @@ function renderMessageList() {
     const typeOptions = [
         { value: '', label: '全部消息' },
         { value: MESSAGE_TYPES.NEW_DOC_PROPOSE, label: '待批示' },
+        { value: MESSAGE_TYPES.DOC_ASSIGNED_MAIN, label: '主办待处理' },
+        { value: MESSAGE_TYPES.DOC_ASSIGNED_CO, label: '协办待处理' },
         { value: MESSAGE_TYPES.DOC_ASSIGNED, label: '新交办' },
+        { value: MESSAGE_TYPES.DOC_CO_FEEDBACK, label: '协办已反馈' },
+        { value: MESSAGE_TYPES.DOC_CO_ALL_FEEDBACK, label: '协办全部反馈' },
+        { value: MESSAGE_TYPES.DOC_MAIN_SUMMARY, label: '主办已汇总' },
         { value: MESSAGE_TYPES.DOC_HANDLED, label: '办理中' },
         { value: MESSAGE_TYPES.DOC_FEEDBACK, label: '已反馈' },
         { value: MESSAGE_TYPES.DOC_COMPLETED, label: '待归档' },
         { value: MESSAGE_TYPES.DOC_ARCHIVED, label: '已归档' },
         { value: MESSAGE_TYPES.SUPERVISION, label: '督办通知' },
+        { value: MESSAGE_TYPES.DOC_RETURNED, label: '已退回' },
+        { value: MESSAGE_TYPES.DOC_RESUBMITTED, label: '已重提' },
         { value: MESSAGE_TYPES.EXTENSION_REQUEST, label: '延期申请' },
         { value: MESSAGE_TYPES.EXTENSION_APPROVED, label: '延期通过' },
         { value: MESSAGE_TYPES.EXTENSION_REJECTED, label: '延期驳回' }
@@ -4939,9 +5163,9 @@ function renderMessageListView(messages) {
     return `
         <div class="message-list-full">
             ${messages.map(msg => `
-                <div class="message-item-full ${msg.read ? '' : 'unread'}"
+                <div class="message-item-full ${msg.read ? '' : 'unread'} msg-${msg.type}"
                      onclick="handleMessageClick('${msg.id}', '${msg.docId}')">
-                    <div class="message-icon msg-${msg.type}">
+                    <div class="message-icon">
                         ${getMessageIcon(msg.type)}
                     </div>
                     <div class="message-content-full">
@@ -5194,6 +5418,7 @@ function renderBatchImportTable() {
                         <th>总数</th>
                         <th>成功</th>
                         <th>失败</th>
+                        <th>修正</th>
                         <th>状态</th>
                         <th>导入时间</th>
                         <th>操作人</th>
@@ -5201,7 +5426,9 @@ function renderBatchImportTable() {
                     </tr>
                 </thead>
                 <tbody>
-                    ${batches.map(batch => `
+                    ${batches.map(batch => {
+                        const correctedCount = batch.items ? batch.items.filter(it => it.hasCorrected).length : 0;
+                        return `
                         <tr>
                             <td><strong>${batch.id}</strong></td>
                             <td>${batch.fileName}</td>
@@ -5209,6 +5436,12 @@ function renderBatchImportTable() {
                             <td>${batch.totalCount}</td>
                             <td style="color:#52c41a;">${batch.successCount}</td>
                             <td style="color:#f5222d;">${batch.failCount}</td>
+                            <td>
+                                ${correctedCount > 0 
+                                    ? `<span class="correction-badge">✏️ ${correctedCount}</span>` 
+                                    : '<span style="color:#999;">0</span>'
+                                }
+                            </td>
                             <td><span class="import-status-badge status-${batch.status}">${IMPORT_STATUS_LABELS[batch.status]}</span></td>
                             <td>${formatDateTime(batch.createdAt)}</td>
                             <td>${batch.createdByName}</td>
@@ -5220,7 +5453,7 @@ function renderBatchImportTable() {
                                 </div>
                             </td>
                         </tr>
-                    `).join('')}
+                    `}).join('')}
                 </tbody>
             </table>
         </div>
@@ -5366,15 +5599,34 @@ function parseCSV(text) {
 
     const fieldMap = {
         'title': 'title',
+        'biaoti': 'title',
+        '标题': 'title',
         'fromunit': 'fromUnit',
         'from_unit': 'fromUnit',
+        'laiwendanwei': 'fromUnit',
+        '来文单位': 'fromUnit',
         'docnumber': 'docNumber',
         'doc_number': 'docNumber',
+        'laiwenzihao': 'docNumber',
+        '来文字号': 'docNumber',
+        '文号': 'docNumber',
         'docdate': 'docDate',
         'doc_date': 'docDate',
+        'laiwenriqi': 'docDate',
+        '来文日期': 'docDate',
         'priority': 'priority',
+        'jinjichengdu': 'priority',
+        '紧急程度': 'priority',
         'category': 'category',
-        'content': 'content'
+        'leibie': 'category',
+        '类别': 'category',
+        'content': 'content',
+        'neirong': 'content',
+        '内容': 'content',
+        'deadline': 'deadline',
+        'banliqixian': 'deadline',
+        '办理期限': 'deadline',
+        '期限': 'deadline'
     };
 
     const headers = parseCSVLine(lines[0]).map(h => h.trim());
@@ -5467,8 +5719,20 @@ function renderBatchImportPreview() {
         return;
     }
 
+    editingImportRow = null;
+    if (!currentPreviewTab) currentPreviewTab = 'all';
+
     const validItems = batch.items.filter(item => item.valid);
     const invalidItems = batch.items.filter(item => !item.valid);
+    const correctedCount = batch.items.filter(item => item.hasCorrected).length;
+
+    let displayItems = batch.items;
+    if (currentPreviewTab === 'valid') displayItems = validItems;
+    else if (currentPreviewTab === 'invalid') displayItems = invalidItems;
+
+    const allActive = currentPreviewTab === 'all' ? ' active' : '';
+    const validActive = currentPreviewTab === 'valid' ? ' active' : '';
+    const invalidActive = currentPreviewTab === 'invalid' ? ' active' : '';
 
     const content = document.getElementById('contentArea');
 
@@ -5478,7 +5742,7 @@ function renderBatchImportPreview() {
             <button class="btn btn-default" onclick="navigateTo('batchImport')">返回列表</button>
         </div>
 
-        <div class="preview-stats-grid">
+        <div class="preview-stats-grid" style="grid-template-columns: repeat(4, 1fr);">
             <div class="preview-stat-card preview-stat-total">
                 <div class="preview-stat-icon">📊</div>
                 <div class="preview-stat-info">
@@ -5498,6 +5762,13 @@ function renderBatchImportPreview() {
                 <div class="preview-stat-info">
                     <div class="preview-stat-number">${invalidItems.length}</div>
                     <div class="preview-stat-label">校验失败</div>
+                </div>
+            </div>
+            <div class="preview-stat-card" style="border-left-color: #fa8c16;">
+                <div class="preview-stat-icon" style="background: #fff7e6;">✏️</div>
+                <div class="preview-stat-info">
+                    <div class="preview-stat-number">${correctedCount}</div>
+                    <div class="preview-stat-label">已修正</div>
                 </div>
             </div>
         </div>
@@ -5528,17 +5799,26 @@ function renderBatchImportPreview() {
             </div>
         </div>
 
+        <div class="card" style="border-left: 4px solid #fa8c16;">
+            <div class="card-body" style="padding: 12px 20px;">
+                <div style="display: flex; align-items: center; gap: 8px; color: #d46b08; font-size: 13px;">
+                    <span style="font-size: 16px;">💡</span>
+                    <span><strong>操作提示：</strong>校验失败的行可直接点击"编辑"修正数据（标题、文号、来文单位、紧急程度、办理期限），修正后点击"保存校验"重新验证。确认导入时仅导入校验通过的行，失败行和修正记录将完整留存。</span>
+                </div>
+            </div>
+        </div>
+
         <div class="card">
             <div class="card-header">
                 <span class="card-title">数据校验结果</span>
                 <div class="preview-tabs">
-                    <span class="preview-tab active" onclick="switchPreviewTab('all', this)">全部 (${batch.totalCount})</span>
-                    <span class="preview-tab" onclick="switchPreviewTab('valid', this)">通过 (${validItems.length})</span>
-                    <span class="preview-tab" onclick="switchPreviewTab('invalid', this)">失败 (${invalidItems.length})</span>
+                    <span class="preview-tab${allActive}" onclick="switchPreviewTab('all', this)">全部 (${batch.totalCount})</span>
+                    <span class="preview-tab${validActive}" onclick="switchPreviewTab('valid', this)">通过 (${validItems.length})</span>
+                    <span class="preview-tab${invalidActive}" onclick="switchPreviewTab('invalid', this)">失败 (${invalidItems.length})</span>
                 </div>
             </div>
-            <div class="card-body" style="padding:0;">
-                ${renderPreviewTable(batch.items, 'all')}
+            <div class="card-body" style="padding:0;" id="previewTableContainer">
+                ${renderPreviewTable(displayItems, currentPreviewTab)}
             </div>
         </div>
 
@@ -5559,6 +5839,8 @@ function switchPreviewTab(type, tabEl) {
     document.querySelectorAll('.preview-tab').forEach(el => el.classList.remove('active'));
     tabEl.classList.add('active');
 
+    currentPreviewTab = type;
+
     let items = batch.items;
     if (type === 'valid') {
         items = batch.items.filter(item => item.valid);
@@ -5566,7 +5848,7 @@ function switchPreviewTab(type, tabEl) {
         items = batch.items.filter(item => !item.valid);
     }
 
-    const tableContainer = document.querySelector('.card-body[style="padding:0;"]');
+    const tableContainer = document.getElementById('previewTableContainer');
     if (tableContainer) {
         tableContainer.innerHTML = renderPreviewTable(items, type);
     }
@@ -5577,44 +5859,289 @@ function renderPreviewTable(items, type) {
         return '<div class="empty-state"><p>暂无数据</p></div>';
     }
 
+    const priorityOptions = [
+        { value: 'normal', label: '普通' },
+        { value: 'high', label: '加急' },
+        { value: 'urgent', label: '特急' }
+    ];
+
+    function formatDeadline(deadline) {
+        if (!deadline) return '-';
+        try {
+            const d = new Date(deadline);
+            return d.toISOString().split('T')[0];
+        } catch (e) {
+            return deadline;
+        }
+    }
+
+    function renderCell(item, field, displayValue) {
+        if (editingImportRow === item.rowIndex) {
+            return '';
+        }
+        return `<span class="cell-display" title="${escapeHtml(displayValue || '')}">${escapeHtml(displayValue || '-')}</span>`;
+    }
+
+    function renderCorrectionsBadge(item) {
+        if (!item.hasCorrected || !item.corrections || item.corrections.length === 0) {
+            return '';
+        }
+        const summary = item.corrections.map(c => `${c.fieldLabel}: ${c.oldValue || '(空)'} → ${c.newValue || '(空)'}`).join('；');
+        return `<span class="correction-badge" title="修正记录：${escapeHtml(summary)}">✏️ 已修正${item.corrections.length}处</span>`;
+    }
+
     return `
         <div class="table-container import-preview-table">
             <table class="data-table">
                 <thead>
                     <tr>
                         <th style="width:60px;">行号</th>
-                        <th>标题</th>
-                        <th>来文单位</th>
-                        <th>来文字号</th>
-                        <th>来文日期</th>
-                        <th>紧急程度</th>
-                        <th>状态</th>
-                        <th>错误信息</th>
+                        <th style="min-width:220px;">标题</th>
+                        <th style="min-width:140px;">来文单位</th>
+                        <th style="min-width:140px;">来文字号</th>
+                        <th style="width:110px;">来文日期</th>
+                        <th style="width:90px;">紧急程度</th>
+                        <th style="width:110px;">办理期限</th>
+                        <th style="width:90px;">状态</th>
+                        <th style="min-width:200px;">错误信息 / 修正记录</th>
+                        <th style="width:160px;">操作</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${items.map(item => `
-                        <tr class="${item.valid ? 'row-valid' : 'row-invalid'}">
-                            <td>${item.rowIndex}</td>
-                            <td class="td-ellipsis" title="${item.data.title || ''}">${item.data.title || '-'}</td>
-                            <td>${item.data.fromUnit || '-'}</td>
-                            <td>${item.data.docNumber || '-'}</td>
-                            <td>${item.data.docDate || '-'}</td>
-                            <td>${item.data.priority ? getPriorityLabel(item.data.priority) : '-'}</td>
-                            <td>
-                                <span class="valid-badge ${item.valid ? 'valid' : 'invalid'}">
-                                    ${item.valid ? '✓ 通过' : '✗ 失败'}
-                                </span>
-                            </td>
-                            <td class="error-cell">
-                                ${item.valid ? '-' : item.errors.join('；')}
-                            </td>
-                        </tr>
-                    `).join('')}
+                    ${items.map(item => {
+                        const isEditing = editingImportRow === item.rowIndex;
+                        const deadlineForInput = item.data.deadline ? formatDeadline(item.data.deadline) : '';
+
+                        if (isEditing) {
+                            return `
+                                <tr class="row-editing">
+                                    <td>${item.rowIndex}</td>
+                                    <td>
+                                        <input type="text" class="form-input-sm edit-input edit-title" data-field="title" 
+                                               value="${escapeHtml(item.data.title || '')}" placeholder="请输入标题">
+                                    </td>
+                                    <td>
+                                        <input type="text" class="form-input-sm edit-input edit-fromUnit" data-field="fromUnit"
+                                               value="${escapeHtml(item.data.fromUnit || '')}" placeholder="请输入来文单位">
+                                    </td>
+                                    <td>
+                                        <input type="text" class="form-input-sm edit-input edit-docNumber" data-field="docNumber"
+                                               value="${escapeHtml(item.data.docNumber || '')}" placeholder="请输入文号">
+                                    </td>
+                                    <td>${item.data.docDate || '-'}</td>
+                                    <td>
+                                        <select class="form-select-sm edit-input edit-priority" data-field="priority">
+                                            ${priorityOptions.map(o => `<option value="${o.value}" ${item.data.priority === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <input type="date" class="form-input-sm edit-input edit-deadline" data-field="deadline"
+                                               value="${deadlineForInput}">
+                                    </td>
+                                    <td>
+                                        <span class="valid-badge invalid">编辑中</span>
+                                    </td>
+                                    <td class="error-cell">
+                                        ${item.valid ? '-' : item.errors.join('；')}
+                                    </td>
+                                    <td>
+                                        <div class="row-edit-actions">
+                                            <button class="btn btn-primary btn-xs" onclick="saveRowEdit(${item.rowIndex})">💾 保存校验</button>
+                                            <button class="btn btn-default btn-xs" onclick="cancelRowEdit()">取消</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }
+
+                        return `
+                            <tr class="${item.valid ? 'row-valid' : 'row-invalid'} ${item.hasCorrected ? 'row-corrected' : ''}">
+                                <td>${item.rowIndex}</td>
+                                <td class="td-ellipsis">${renderCell(item, 'title', item.data.title)}</td>
+                                <td>${renderCell(item, 'fromUnit', item.data.fromUnit)}</td>
+                                <td>${renderCell(item, 'docNumber', item.data.docNumber)}</td>
+                                <td>${item.data.docDate || '-'}</td>
+                                <td>${item.data.priority ? getPriorityLabel(item.data.priority) : '-'}</td>
+                                <td>${formatDeadline(item.data.deadline)}</td>
+                                <td>
+                                    <span class="valid-badge ${item.valid ? 'valid' : 'invalid'}">
+                                        ${item.valid ? '✓ 通过' : '✗ 失败'}
+                                    </span>
+                                </td>
+                                <td class="error-cell">
+                                    ${item.valid 
+                                        ? (renderCorrectionsBadge(item) || '-') 
+                                        : `<div>${item.errors.join('；')}</div>${renderCorrectionsBadge(item)}`
+                                    }
+                                </td>
+                                <td>
+                                    <div class="row-actions">
+                                        <button class="btn btn-outline btn-xs" onclick="startRowEdit(${item.rowIndex})">✏️ 编辑</button>
+                                        ${!item.valid ? `<button class="btn btn-outline btn-xs" onclick="revalidateRow(${item.rowIndex})">🔄 重校验</button>` : ''}
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
                 </tbody>
             </table>
         </div>
     `;
+}
+
+function startRowEdit(rowIndex) {
+    if (editingImportRow !== null) {
+        showToast('请先保存或取消当前行的编辑', 'warning');
+        return;
+    }
+    editingImportRow = rowIndex;
+    refreshPreviewTable();
+}
+
+function cancelRowEdit() {
+    editingImportRow = null;
+    refreshPreviewTable();
+}
+
+function saveRowEdit(rowIndex) {
+    const batchId = currentImportBatchId || currentPreviewBatchId;
+    const batch = importBatchStore.getBatch(batchId);
+    if (!batch) return;
+
+    const editInputs = document.querySelectorAll('.edit-input');
+    const newData = {};
+    editInputs.forEach(input => {
+        const field = input.dataset.field;
+        let value = input.value;
+        if (field === 'deadline') {
+            if (value) {
+                try {
+                    value = new Date(value).toISOString();
+                } catch (e) {
+                }
+            } else {
+                value = null;
+            }
+        } else {
+            value = value ? value.trim() : '';
+        }
+        newData[field] = value;
+    });
+
+    const titleInput = document.querySelector('.edit-title');
+    if (titleInput && !titleInput.value.trim()) {
+        showToast('标题不能为空', 'warning');
+        titleInput.focus();
+        return;
+    }
+    const fromUnitInput = document.querySelector('.edit-fromUnit');
+    if (fromUnitInput && !fromUnitInput.value.trim()) {
+        showToast('来文单位不能为空', 'warning');
+        fromUnitInput.focus();
+        return;
+    }
+
+    const updateResult = importBatchStore.updateBatchItem(batchId, rowIndex, newData);
+    if (!updateResult) {
+        showToast('保存失败', 'error');
+        return;
+    }
+
+    const revalidated = importBatchStore.revalidateItem(batchId, rowIndex);
+    if (!revalidated) {
+        showToast('校验失败', 'error');
+        return;
+    }
+
+    editingImportRow = null;
+
+    if (revalidated.valid) {
+        const correctionCount = updateResult.corrections.length;
+        showToast(correctionCount > 0 ? `已保存并通过校验（修正${correctionCount}处）` : '已保存并通过校验', 'success');
+    } else {
+        showToast(`保存成功，但仍存在问题：${revalidated.errors.join('；')}`, 'warning');
+    }
+
+    refreshPreviewPage();
+}
+
+function revalidateRow(rowIndex) {
+    const batchId = currentImportBatchId || currentPreviewBatchId;
+    const batch = importBatchStore.getBatch(batchId);
+    if (!batch) return;
+
+    const item = importBatchStore.revalidateItem(batchId, rowIndex);
+    if (!item) {
+        showToast('校验失败', 'error');
+        return;
+    }
+
+    if (item.valid) {
+        showToast('校验通过', 'success');
+    } else {
+        showToast(`校验失败：${item.errors.join('；')}`, 'warning');
+    }
+
+    refreshPreviewPage();
+}
+
+function refreshPreviewPage() {
+    const batchId = currentImportBatchId || currentPreviewBatchId;
+    const batch = importBatchStore.getBatch(batchId);
+    if (!batch) return;
+
+    const validItems = batch.items.filter(item => item.valid);
+    const invalidItems = batch.items.filter(item => !item.valid);
+    const correctedCount = batch.items.filter(item => item.hasCorrected).length;
+
+    const allTabs = document.querySelectorAll('.preview-tab');
+    allTabs.forEach(tab => {
+        const text = tab.textContent;
+        if (text.startsWith('全部')) {
+            tab.textContent = `全部 (${batch.totalCount})`;
+        } else if (text.startsWith('通过')) {
+            tab.textContent = `通过 (${validItems.length})`;
+        } else if (text.startsWith('失败')) {
+            tab.textContent = `失败 (${invalidItems.length})`;
+        }
+    });
+
+    const confirmBtn = document.querySelector('.btn-primary.btn-lg');
+    if (confirmBtn) {
+        confirmBtn.textContent = `确认导入 (${validItems.length} 条)`;
+        confirmBtn.disabled = validItems.length === 0;
+    }
+
+    const statsCards = document.querySelectorAll('.preview-stat-number');
+    if (statsCards.length >= 4) {
+        statsCards[0].textContent = batch.totalCount;
+        statsCards[1].textContent = validItems.length;
+        statsCards[2].textContent = invalidItems.length;
+        statsCards[3].textContent = correctedCount;
+    }
+
+    refreshPreviewTable();
+}
+
+function refreshPreviewTable() {
+    const batchId = currentImportBatchId || currentPreviewBatchId;
+    const batch = importBatchStore.getBatch(batchId);
+    if (!batch) return;
+
+    const container = document.getElementById('previewTableContainer');
+    if (!container) {
+        renderBatchImportPreview();
+        return;
+    }
+
+    let items = batch.items;
+    if (currentPreviewTab === 'valid') {
+        items = batch.items.filter(it => it.valid);
+    } else if (currentPreviewTab === 'invalid') {
+        items = batch.items.filter(it => !it.valid);
+    }
+
+    container.innerHTML = renderPreviewTable(items, currentPreviewTab);
 }
 
 function confirmImportBatch() {
@@ -5653,8 +6180,36 @@ function renderBatchImportResult() {
 
     const successItems = batch.items.filter(item => item.docId);
     const failItems = batch.items.filter(item => !item.valid || !item.docId);
+    const correctedItems = batch.items.filter(item => item.hasCorrected && item.corrections && item.corrections.length > 0);
 
     const content = document.getElementById('contentArea');
+
+    function formatDeadline(deadline) {
+        if (!deadline) return '-';
+        try {
+            const d = new Date(deadline);
+            return d.toISOString().split('T')[0];
+        } catch (e) {
+            return deadline;
+        }
+    }
+
+    function renderCorrectionList(item) {
+        if (!item.corrections || item.corrections.length === 0) return '';
+        return `
+            <div class="correction-list">
+                <div class="correction-title">✏️ 修正记录：</div>
+                ${item.corrections.map(c => `
+                    <div class="correction-item">
+                        <span class="correction-field">${c.fieldLabel}</span>：
+                        <span class="correction-old">${escapeHtml(c.oldValue || '(空)')}</span>
+                        <span class="correction-arrow">→</span>
+                        <span class="correction-new">${escapeHtml(c.newValue || '(空)')}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
 
     content.innerHTML = `
         <div class="page-header">
@@ -5668,15 +6223,15 @@ function renderBatchImportResult() {
             </div>
             <div class="result-info">
                 <div class="result-title">
-                    ${batch.status === IMPORT_STATUS.FAILED ? '导入失败' : '导入成功'}
+                    ${batch.status === IMPORT_STATUS.FAILED ? '导入完成（存在失败记录）' : '导入成功'}
                 </div>
                 <div class="result-desc">
-                    批次号：${batch.id} · 共 ${batch.totalCount} 条记录
+                    批次号：${batch.id} · 共 ${batch.totalCount} 条记录 · 成功 ${batch.successCount} 条 · 失败 ${batch.failCount} 条
                 </div>
             </div>
         </div>
 
-        <div class="preview-stats-grid" style="margin-top:20px;">
+        <div class="preview-stats-grid" style="margin-top:20px; grid-template-columns: repeat(4, 1fr);">
             <div class="preview-stat-card preview-stat-success">
                 <div class="preview-stat-icon">✅</div>
                 <div class="preview-stat-info">
@@ -5689,6 +6244,13 @@ function renderBatchImportResult() {
                 <div class="preview-stat-info">
                     <div class="preview-stat-number">${batch.failCount}</div>
                     <div class="preview-stat-label">导入失败</div>
+                </div>
+            </div>
+            <div class="preview-stat-card" style="border-left-color: #fa8c16;">
+                <div class="preview-stat-icon" style="background: #fff7e6;">✏️</div>
+                <div class="preview-stat-info">
+                    <div class="preview-stat-number">${correctedItems.length}</div>
+                    <div class="preview-stat-label">行内修正</div>
                 </div>
             </div>
             <div class="preview-stat-card preview-stat-total">
@@ -5711,22 +6273,31 @@ function renderBatchImportResult() {
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>行号</th>
+                                    <th style="width:60px;">行号</th>
                                     <th>文号</th>
                                     <th>标题</th>
                                     <th>来文单位</th>
                                     <th>紧急程度</th>
+                                    <th>办理期限</th>
+                                    <th>修正情况</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${successItems.map(item => `
-                                    <tr>
+                                    <tr class="${item.hasCorrected ? 'row-corrected' : ''}">
                                         <td>${item.rowIndex}</td>
                                         <td><strong>${item.docId}</strong></td>
-                                        <td class="td-ellipsis" title="${item.data.title}">${item.data.title}</td>
-                                        <td>${item.data.fromUnit}</td>
+                                        <td class="td-ellipsis" title="${escapeHtml(item.data.title)}">${escapeHtml(item.data.title)}</td>
+                                        <td>${escapeHtml(item.data.fromUnit)}</td>
                                         <td>${item.data.priority ? getPriorityLabel(item.data.priority) : '-'}</td>
+                                        <td>${formatDeadline(item.data.deadline)}</td>
+                                        <td>
+                                            ${item.hasCorrected 
+                                                ? `<span class="correction-badge" title="${escapeHtml(item.corrections.map(c => c.fieldLabel + ': ' + (c.oldValue || '(空)') + ' → ' + (c.newValue || '(空)')).join('；'))}">✏️ ${item.corrections.length}处</span>`
+                                                : '-'
+                                            }
+                                        </td>
                                         <td>
                                             <a class="action-link" onclick="navigateTo('detail', {id: '${item.docId}'})">查看</a>
                                         </td>
@@ -5739,8 +6310,45 @@ function renderBatchImportResult() {
             </div>
         </div>
 
+        ${correctedItems.length > 0 ? `
+        <div class="card" style="margin-top:20px;">
+            <div class="card-header">
+                <span class="card-title">修正记录详情</span>
+                <span class="badge-count" style="background:#fa8c16;">${correctedItems.length} 条</span>
+            </div>
+            <div class="card-body" style="padding:0;">
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style="width:60px;">行号</th>
+                                <th>标题</th>
+                                <th>导入状态</th>
+                                <th>修正内容</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${correctedItems.map(item => `
+                                <tr class="${item.docId ? 'row-corrected' : 'row-invalid'}">
+                                    <td>${item.rowIndex}</td>
+                                    <td class="td-ellipsis" title="${escapeHtml(item.data.title || '')}">${escapeHtml(item.data.title || '-')}</td>
+                                    <td>
+                                        <span class="valid-badge ${item.docId ? 'valid' : 'invalid'}">
+                                            ${item.docId ? '✓ 已导入' : '✗ 未导入'}
+                                        </span>
+                                    </td>
+                                    <td>${renderCorrectionList(item)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        ` : ''}
+
         ${failItems.length > 0 ? `
-        <div class="card">
+        <div class="card" style="margin-top:20px;">
             <div class="card-header">
                 <span class="card-title">导入失败记录</span>
                 <span class="badge-count" style="background:#f5222d;">${failItems.length} 条</span>
@@ -5754,6 +6362,7 @@ function renderBatchImportResult() {
                                 <th>标题</th>
                                 <th>来文单位</th>
                                 <th>来文字号</th>
+                                <th>紧急程度</th>
                                 <th>失败原因</th>
                             </tr>
                         </thead>
@@ -5761,11 +6370,13 @@ function renderBatchImportResult() {
                             ${failItems.map(item => `
                                 <tr class="row-invalid">
                                     <td>${item.rowIndex}</td>
-                                    <td>${item.data.title || '-'}</td>
-                                    <td>${item.data.fromUnit || '-'}</td>
-                                    <td>${item.data.docNumber || '-'}</td>
+                                    <td>${escapeHtml(item.data.title || '-')}</td>
+                                    <td>${escapeHtml(item.data.fromUnit || '-')}</td>
+                                    <td>${escapeHtml(item.data.docNumber || '-')}</td>
+                                    <td>${item.data.priority ? getPriorityLabel(item.data.priority) : '-'}</td>
                                     <td class="error-cell">
-                                        ${item.errors && item.errors.length > 0 ? item.errors.join('；') : '导入失败'}
+                                        <div>${item.errors && item.errors.length > 0 ? item.errors.join('；') : '导入失败'}</div>
+                                        ${renderCorrectionList(item)}
                                     </td>
                                 </tr>
                             `).join('')}

@@ -371,6 +371,60 @@ const HANDLE_STATUS_LABELS = {
     [HANDLE_STATUS.COMPLETED]: '已完成'
 };
 
+const COOP_SUB_STATUS = {
+    MAIN_PENDING: 'main_pending',
+    CO_PENDING: 'co_pending',
+    CO_COMPLETED: 'co_completed',
+    MAIN_SUMMARY_PENDING: 'main_summary_pending'
+};
+
+const COOP_SUB_STATUS_LABELS = {
+    [COOP_SUB_STATUS.MAIN_PENDING]: '主办待处理',
+    [COOP_SUB_STATUS.CO_PENDING]: '协办待处理',
+    [COOP_SUB_STATUS.CO_COMPLETED]: '协办已反馈',
+    [COOP_SUB_STATUS.MAIN_SUMMARY_PENDING]: '主办待汇总'
+};
+
+function getCoopSubStatus(doc, userId) {
+    if (!doc || !doc.isMultiDept || doc.currentNode !== FLOW_NODES.HANDLE && doc.currentNode !== FLOW_NODES.FEEDBACK) {
+        return null;
+    }
+    const handlerRecord = getHandlerRecord(doc, userId);
+    if (!handlerRecord) return null;
+
+    const isMain = handlerRecord.type === HANDLE_TYPES.MAIN;
+    const allCoCompleted = allCoHandlersCompleted(doc);
+
+    if (isMain) {
+        if (doc.currentNode === FLOW_NODES.FEEDBACK || allCoCompleted) {
+            return COOP_SUB_STATUS.MAIN_SUMMARY_PENDING;
+        }
+        return COOP_SUB_STATUS.MAIN_PENDING;
+    } else {
+        if (handlerRecord.status === HANDLE_STATUS.COMPLETED) {
+            return COOP_SUB_STATUS.CO_COMPLETED;
+        }
+        return COOP_SUB_STATUS.CO_PENDING;
+    }
+}
+
+function getCoopSubStatusLabel(doc, userId) {
+    const status = getCoopSubStatus(doc, userId);
+    return status ? COOP_SUB_STATUS_LABELS[status] : '';
+}
+
+function getCoopSubStatusClass(doc, userId) {
+    const status = getCoopSubStatus(doc, userId);
+    if (!status) return '';
+    const classMap = {
+        [COOP_SUB_STATUS.MAIN_PENDING]: 'coop-status-main-pending',
+        [COOP_SUB_STATUS.CO_PENDING]: 'coop-status-co-pending',
+        [COOP_SUB_STATUS.CO_COMPLETED]: 'coop-status-co-completed',
+        [COOP_SUB_STATUS.MAIN_SUMMARY_PENDING]: 'coop-status-main-summary'
+    };
+    return classMap[status] || '';
+}
+
 const FILE_TYPES = {
     DOC: 'doc',
     XLS: 'xls',
@@ -580,12 +634,35 @@ function formatDateForMessage(isoString) {
     return new Date(isoString).toLocaleDateString('zh-CN');
 }
 
-function getDocStatusLabel(doc) {
+function getDocStatusLabel(doc, userId) {
     if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
         return '已办结';
     }
     if (doc.isReturned) {
         return '已退回';
+    }
+    if (doc.isMultiDept && (doc.currentNode === FLOW_NODES.HANDLE || doc.currentNode === FLOW_NODES.FEEDBACK)) {
+        if (userId) {
+            const subStatus = getCoopSubStatus(doc, userId);
+            if (subStatus) {
+                return COOP_SUB_STATUS_LABELS[subStatus];
+            }
+        }
+        const allCoCompleted = allCoHandlersCompleted(doc);
+        const mainHandler = getMainHandler(doc);
+        const mainCompleted = mainHandler && mainHandler.status === HANDLE_STATUS.COMPLETED;
+        if (doc.currentNode === FLOW_NODES.FEEDBACK || (allCoCompleted && !mainCompleted)) {
+            return '主办待汇总';
+        }
+        const coCompleted = getCoHandlers(doc).filter(r => r.status === HANDLE_STATUS.COMPLETED).length;
+        const coTotal = getCoHandlers(doc).length;
+        if (coCompleted > 0 && coCompleted < coTotal) {
+            return '协办部分反馈';
+        }
+        if (coCompleted === coTotal && coTotal > 0) {
+            return '协办已全部反馈';
+        }
+        return '多科室办理中';
     }
     const statusMap = {
         [FLOW_NODES.REGISTER]: '待登记',
@@ -598,7 +675,7 @@ function getDocStatusLabel(doc) {
     return statusMap[doc.currentNode] || '未知';
 }
 
-function getDocStatusClass(doc) {
+function getDocStatusClass(doc, userId) {
     if (doc.currentNode === FLOW_NODES.COMPLETE && doc.archived) {
         return 'status-completed';
     }
@@ -607,6 +684,23 @@ function getDocStatusClass(doc) {
     }
     if (doc.currentNode === FLOW_NODES.COMPLETE) {
         return 'status-pending';
+    }
+    if (doc.isMultiDept && (doc.currentNode === FLOW_NODES.HANDLE || doc.currentNode === FLOW_NODES.FEEDBACK)) {
+        if (userId) {
+            const subStatus = getCoopSubStatus(doc, userId);
+            if (subStatus) {
+                return getCoopSubStatusClass(doc, userId);
+            }
+        }
+        const allCoCompleted = allCoHandlersCompleted(doc);
+        if (doc.currentNode === FLOW_NODES.FEEDBACK || allCoCompleted) {
+            return 'coop-status-main-summary';
+        }
+        const coCompleted = getCoHandlers(doc).filter(r => r.status === HANDLE_STATUS.COMPLETED).length;
+        if (coCompleted > 0) {
+            return 'coop-status-co-completed';
+        }
+        return 'status-processing';
     }
     return 'status-processing';
 }
@@ -1043,6 +1137,20 @@ class DataStore {
             });
         }
 
+        if (filters.myCoopStatus && filters.currentUserId) {
+            result = result.filter(d => {
+                const subStatus = getCoopSubStatus(d, filters.currentUserId);
+                if (!subStatus) return false;
+                const statusMap = {
+                    'main_pending': COOP_SUB_STATUS.MAIN_PENDING,
+                    'co_pending': COOP_SUB_STATUS.CO_PENDING,
+                    'co_completed': COOP_SUB_STATUS.CO_COMPLETED,
+                    'main_summary': COOP_SUB_STATUS.MAIN_SUMMARY_PENDING
+                };
+                return subStatus === statusMap[filters.myCoopStatus];
+            });
+        }
+
         return result;
     }
 
@@ -1200,8 +1308,8 @@ class DataStore {
         doc.handleRecords.forEach(hr => {
             const isMain = hr.type === HANDLE_TYPES.MAIN;
             messageStore.createMessage({
-                type: MESSAGE_TYPES.DOC_ASSIGNED,
-                title: isMain ? '新公文主办' : '新公文协办',
+                type: isMain ? MESSAGE_TYPES.DOC_ASSIGNED_MAIN : MESSAGE_TYPES.DOC_ASSIGNED_CO,
+                title: isMain ? '【主办待处理】新公文主办' : '【协办待处理】新公文协办',
                 content: `《${doc.title}》已分派给您${isMain ? '主办' : '协办'}`,
                 docId: doc.id,
                 docTitle: doc.title,
@@ -1274,19 +1382,29 @@ class DataStore {
             if (mainHandler) {
                 if (allCoCompleted && doc.isMultiDept) {
                     messageStore.createMessage({
-                        type: MESSAGE_TYPES.DOC_HANDLED,
-                        title: '所有协办已完成',
-                        content: `《${doc.title}》所有协办科室均已提交意见，请您提交最终反馈`,
+                        type: MESSAGE_TYPES.DOC_CO_ALL_FEEDBACK,
+                        title: '【主办待汇总】所有协办已完成',
+                        content: `《${doc.title}》所有协办科室均已提交意见，请您汇总后提交最终反馈`,
                         docId: doc.id,
                         docTitle: doc.title,
                         fromUserId: operator.id,
                         fromUserName: operator.name,
                         toUserId: mainHandler.userId
                     });
+                    messageStore.createMessage({
+                        type: MESSAGE_TYPES.DOC_CO_ALL_FEEDBACK,
+                        title: '协办已全部反馈',
+                        content: `《${doc.title}》所有协办科室均已提交反馈意见`,
+                        docId: doc.id,
+                        docTitle: doc.title,
+                        fromUserId: operator.id,
+                        fromUserName: operator.name,
+                        toRole: ROLES.LEADER
+                    });
                 } else {
                     messageStore.createMessage({
-                        type: MESSAGE_TYPES.DOC_HANDLED,
-                        title: '协办意见已提交',
+                        type: MESSAGE_TYPES.DOC_CO_FEEDBACK,
+                        title: '【协办已反馈】协办意见已提交',
                         content: `《${doc.title}》${handlerRecord.dept}已提交协办意见`,
                         docId: doc.id,
                         docTitle: doc.title,
@@ -1376,16 +1494,42 @@ class DataStore {
             toRole: ROLES.OFFICE
         });
 
-        messageStore.createMessage({
-            type: MESSAGE_TYPES.DOC_FEEDBACK,
-            title: '公文已反馈',
-            content: `《${doc.title}》主办人已提交最终反馈`,
-            docId: doc.id,
-            docTitle: doc.title,
-            fromUserId: operator.id,
-            fromUserName: operator.name,
-            toRole: ROLES.LEADER
-        });
+        if (doc.isMultiDept) {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.DOC_MAIN_SUMMARY,
+                title: '【主办已汇总】公文已提交最终反馈',
+                content: `《${doc.title}》主办人已汇总所有协办意见并提交最终反馈`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toRole: ROLES.LEADER
+            });
+            const coHandlers = getCoHandlers(doc);
+            coHandlers.forEach(co => {
+                messageStore.createMessage({
+                    type: MESSAGE_TYPES.DOC_MAIN_SUMMARY,
+                    title: '主办人已汇总反馈',
+                    content: `《${doc.title}》主办人已汇总所有协办意见并提交最终反馈`,
+                    docId: doc.id,
+                    docTitle: doc.title,
+                    fromUserId: operator.id,
+                    fromUserName: operator.name,
+                    toUserId: co.userId
+                });
+            });
+        } else {
+            messageStore.createMessage({
+                type: MESSAGE_TYPES.DOC_FEEDBACK,
+                title: '公文已反馈',
+                content: `《${doc.title}》承办人已提交最终反馈`,
+                docId: doc.id,
+                docTitle: doc.title,
+                fromUserId: operator.id,
+                fromUserName: operator.name,
+                toRole: ROLES.LEADER
+            });
+        }
 
         return doc;
     }
@@ -1779,7 +1923,11 @@ class DataStore {
             pending: 0,
             processing: 0,
             completed: 0,
-            myPending: 0
+            myPending: 0,
+            myMainPending: 0,
+            myCoPending: 0,
+            myCoCompleted: 0,
+            myMainSummaryPending: 0
         };
 
         this.docs.forEach(doc => {
@@ -1803,6 +1951,18 @@ class DataStore {
             } else if (role === ROLES.STAFF && user) {
                 if (this.canOperate(doc, role, user) || this.canResubmit(doc, role, user)) {
                     stats.myPending++;
+                }
+                if (doc.isMultiDept) {
+                    const subStatus = getCoopSubStatus(doc, user.id);
+                    if (subStatus === COOP_SUB_STATUS.MAIN_PENDING) {
+                        stats.myMainPending++;
+                    } else if (subStatus === COOP_SUB_STATUS.CO_PENDING) {
+                        stats.myCoPending++;
+                    } else if (subStatus === COOP_SUB_STATUS.CO_COMPLETED) {
+                        stats.myCoCompleted++;
+                    } else if (subStatus === COOP_SUB_STATUS.MAIN_SUMMARY_PENDING) {
+                        stats.myMainSummaryPending++;
+                    }
                 }
             }
         });
@@ -3028,8 +3188,13 @@ const EXTENSION_STATUS_LABELS = {
 const MESSAGE_TYPES = {
     NEW_DOC_PROPOSE: 'new_doc_propose',
     DOC_ASSIGNED: 'doc_assigned',
+    DOC_ASSIGNED_MAIN: 'doc_assigned_main',
+    DOC_ASSIGNED_CO: 'doc_assigned_co',
     DOC_HANDLED: 'doc_handled',
+    DOC_CO_FEEDBACK: 'doc_co_feedback',
+    DOC_CO_ALL_FEEDBACK: 'doc_co_all_feedback',
     DOC_FEEDBACK: 'doc_feedback',
+    DOC_MAIN_SUMMARY: 'doc_main_summary',
     DOC_COMPLETED: 'doc_completed',
     DOC_ARCHIVED: 'doc_archived',
     SUPERVISION: 'supervision',
@@ -3043,8 +3208,13 @@ const MESSAGE_TYPES = {
 const MESSAGE_TYPE_LABELS = {
     [MESSAGE_TYPES.NEW_DOC_PROPOSE]: '待批示',
     [MESSAGE_TYPES.DOC_ASSIGNED]: '新交办',
+    [MESSAGE_TYPES.DOC_ASSIGNED_MAIN]: '主办待处理',
+    [MESSAGE_TYPES.DOC_ASSIGNED_CO]: '协办待处理',
     [MESSAGE_TYPES.DOC_HANDLED]: '办理中',
+    [MESSAGE_TYPES.DOC_CO_FEEDBACK]: '协办已反馈',
+    [MESSAGE_TYPES.DOC_CO_ALL_FEEDBACK]: '协办已全部反馈',
     [MESSAGE_TYPES.DOC_FEEDBACK]: '已反馈',
+    [MESSAGE_TYPES.DOC_MAIN_SUMMARY]: '主办待汇总',
     [MESSAGE_TYPES.DOC_COMPLETED]: '待归档',
     [MESSAGE_TYPES.DOC_ARCHIVED]: '已归档',
     [MESSAGE_TYPES.SUPERVISION]: '督办',
@@ -3362,6 +3532,103 @@ class ImportBatchStore {
         return batch;
     }
 
+    updateBatchItem(batchId, rowIndex, newData) {
+        const batch = this.getBatch(batchId);
+        if (!batch) return null;
+
+        const item = batch.items.find(it => it.rowIndex === rowIndex);
+        if (!item) return null;
+
+        const oldData = { ...item.data };
+        const corrections = [];
+
+        function normalizeValue(val) {
+            if (val === null || val === undefined || val === '') return '';
+            if (val instanceof Date) return val.toISOString();
+            if (typeof val === 'string') {
+                const trimmed = val.trim();
+                if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+                    const d = new Date(trimmed);
+                    if (!isNaN(d.getTime())) return d.toISOString();
+                }
+                return trimmed;
+            }
+            return String(val);
+        }
+
+        const editableFields = ['title', 'docNumber', 'fromUnit', 'priority', 'deadline'];
+        editableFields.forEach(field => {
+            if (newData[field] !== undefined) {
+                const oldVal = normalizeValue(oldData[field]);
+                const newVal = normalizeValue(newData[field]);
+                if (oldVal !== newVal) {
+                    let displayOld = oldData[field] || '';
+                    let displayNew = newData[field] || '';
+                    if (field === 'deadline') {
+                        if (displayOld) {
+                            try { displayOld = new Date(displayOld).toISOString().split('T')[0]; } catch (e) {}
+                        }
+                        if (displayNew && /^\d{4}-\d{2}-\d{2}T/.test(displayNew)) {
+                            try { displayNew = new Date(displayNew).toISOString().split('T')[0]; } catch (e) {}
+                        }
+                    }
+                    corrections.push({
+                        field: field,
+                        fieldLabel: this.getFieldLabel(field),
+                        oldValue: displayOld,
+                        newValue: displayNew,
+                        correctedAt: new Date().toISOString()
+                    });
+                }
+            }
+        });
+
+        item.data = { ...item.data, ...newData };
+        if (!item.corrections) {
+            item.corrections = [];
+        }
+        item.corrections.push(...corrections);
+        item.hasCorrected = item.corrections.length > 0;
+
+        this.save();
+        return { item, corrections };
+    }
+
+    getFieldLabel(field) {
+        const labels = {
+            'title': '标题',
+            'docNumber': '来文字号',
+            'fromUnit': '来文单位',
+            'priority': '紧急程度',
+            'deadline': '办理期限',
+            'docDate': '来文日期'
+        };
+        return labels[field] || field;
+    }
+
+    revalidateItem(batchId, rowIndex) {
+        const batch = this.getBatch(batchId);
+        if (!batch) return null;
+
+        const item = batch.items.find(it => it.rowIndex === rowIndex);
+        if (!item) return null;
+
+        const otherDocNumbers = new Set();
+        batch.items.forEach(it => {
+            if (it.rowIndex !== rowIndex && it.data.docNumber) {
+                otherDocNumbers.add(it.data.docNumber);
+            }
+        });
+
+        const validation = this.validateImportItem({ ...item.data }, rowIndex, otherDocNumbers);
+        item.valid = validation.valid;
+        item.errors = validation.errors;
+        item.data = validation.data;
+
+        this.save();
+        return item;
+    }
+
     batchCreateDocs(batchId, creator) {
         const batch = this.getBatch(batchId);
         if (!batch) return { success: 0, failed: 0, errors: [] };
@@ -3379,14 +3646,15 @@ class ImportBatchStore {
                     docDate: item.data.docDate || '',
                     priority: item.data.priority || 'normal',
                     category: item.data.category || '',
-                    content: item.data.content || ''
+                    content: item.data.content || '',
+                    deadline: item.data.deadline || null
                 };
                 const doc = dataStore.createDoc(docData, creator);
                 item.docId = doc.id;
                 successCount++;
             } catch (e) {
                 errors.push({
-                    row: index + 1,
+                    row: item.rowIndex,
                     message: '创建公文失败：' + e.message
                 });
             }
@@ -3424,6 +3692,7 @@ class ImportBatchStore {
         const docDate = itemData.docDate == null ? '' : String(itemData.docDate).trim();
         const priority = itemData.priority == null ? '' : String(itemData.priority).trim();
         const docNumber = itemData.docNumber == null ? '' : String(itemData.docNumber).trim();
+        let deadline = itemData.deadline == null ? '' : String(itemData.deadline).trim();
 
         itemData.title = title;
         itemData.fromUnit = fromUnit;
@@ -3482,12 +3751,38 @@ class ImportBatchStore {
             existingDocNumbers.add(docNumber);
         }
 
+        if (deadline !== '' && deadline !== null) {
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+            let parsedDate = null;
+
+            if (dateRegex.test(deadline)) {
+                parsedDate = new Date(deadline);
+            } else if (isoRegex.test(deadline)) {
+                parsedDate = new Date(deadline);
+            } else {
+                errors.push('办理期限格式不正确，应为 YYYY-MM-DD');
+            }
+
+            if (parsedDate !== null) {
+                if (isNaN(parsedDate.getTime())) {
+                    errors.push('办理期限无效');
+                } else {
+                    itemData.deadline = parsedDate.toISOString();
+                }
+            }
+        } else {
+            itemData.deadline = null;
+        }
+
         return {
             valid: errors.length === 0,
             errors: errors,
             data: itemData,
             rowIndex: rowIndex,
-            docId: null
+            docId: null,
+            corrections: itemData.corrections || [],
+            hasCorrected: itemData.hasCorrected || false
         };
     }
 }
