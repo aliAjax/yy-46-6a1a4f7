@@ -891,7 +891,7 @@ class DataStore {
             assignedUserName: null,
             isMultiDept: false,
             handleRecords: [],
-            deadline: null,
+            deadline: docData.deadline || null,
             archived: false,
             createdAt: now,
             createdBy: creator.id,
@@ -3080,6 +3080,101 @@ class ImportBatchStore {
         return batch;
     }
 
+    getFieldLabel(field) {
+        const labels = {
+            title: '标题',
+            docNumber: '来文字号',
+            fromUnit: '来文单位',
+            priority: '紧急程度',
+            deadline: '办理期限',
+            docDate: '来文日期'
+        };
+        return labels[field] || field;
+    }
+
+    normalizeImportValue(value) {
+        if (value === null || value === undefined || value === '') return '';
+        if (value instanceof Date) return value.toISOString();
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+                const d = new Date(trimmed);
+                return isNaN(d.getTime()) ? trimmed : d.toISOString();
+            }
+            return trimmed;
+        }
+        return String(value);
+    }
+
+    formatCorrectionValue(field, value) {
+        if (value === null || value === undefined || value === '') return '';
+        if (field === 'deadline') {
+            const d = new Date(value);
+            return isNaN(d.getTime()) ? String(value) : d.toISOString().split('T')[0];
+        }
+        return String(value);
+    }
+
+    updateBatchItem(batchId, rowIndex, newData) {
+        const batch = this.getBatch(batchId);
+        if (!batch) return null;
+
+        const item = batch.items.find(it => it.rowIndex === rowIndex);
+        if (!item) return null;
+
+        const oldData = { ...item.data };
+        const corrections = [];
+        const editableFields = ['title', 'docNumber', 'fromUnit', 'priority', 'deadline'];
+
+        editableFields.forEach(field => {
+            if (newData[field] === undefined) return;
+            const oldVal = this.normalizeImportValue(oldData[field]);
+            const newVal = this.normalizeImportValue(newData[field]);
+            if (oldVal !== newVal) {
+                corrections.push({
+                    field,
+                    fieldLabel: this.getFieldLabel(field),
+                    oldValue: this.formatCorrectionValue(field, oldData[field]),
+                    newValue: this.formatCorrectionValue(field, newData[field]),
+                    correctedAt: new Date().toISOString()
+                });
+            }
+        });
+
+        item.data = { ...item.data, ...newData };
+        item.corrections = item.corrections || [];
+        item.corrections.push(...corrections);
+        item.hasCorrected = item.corrections.length > 0;
+
+        this.save();
+        return { item, corrections };
+    }
+
+    revalidateItem(batchId, rowIndex) {
+        const batch = this.getBatch(batchId);
+        if (!batch) return null;
+
+        const item = batch.items.find(it => it.rowIndex === rowIndex);
+        if (!item) return null;
+
+        const otherDocNumbers = new Set();
+        batch.items.forEach(it => {
+            if (it.rowIndex !== rowIndex && it.data.docNumber) {
+                otherDocNumbers.add(String(it.data.docNumber).trim());
+            }
+        });
+
+        const validation = this.validateImportItem({ ...item.data }, rowIndex, otherDocNumbers);
+        item.valid = validation.valid;
+        item.errors = validation.errors;
+        item.data = validation.data;
+        item.corrections = item.corrections || [];
+        item.hasCorrected = item.corrections.length > 0;
+
+        this.save();
+        return item;
+    }
+
     batchCreateDocs(batchId, creator) {
         const batch = this.getBatch(batchId);
         if (!batch) return { success: 0, failed: 0, errors: [] };
@@ -3097,14 +3192,15 @@ class ImportBatchStore {
                     docDate: item.data.docDate || '',
                     priority: item.data.priority || 'normal',
                     category: item.data.category || '',
-                    content: item.data.content || ''
+                    content: item.data.content || '',
+                    deadline: item.data.deadline || null
                 };
                 const doc = dataStore.createDoc(docData, creator);
                 item.docId = doc.id;
                 successCount++;
             } catch (e) {
                 errors.push({
-                    row: index + 1,
+                    row: item.rowIndex,
                     message: '创建公文失败：' + e.message
                 });
             }
@@ -3142,6 +3238,7 @@ class ImportBatchStore {
         const docDate = itemData.docDate == null ? '' : String(itemData.docDate).trim();
         const priority = itemData.priority == null ? '' : String(itemData.priority).trim();
         const docNumber = itemData.docNumber == null ? '' : String(itemData.docNumber).trim();
+        const deadline = itemData.deadline == null ? '' : String(itemData.deadline).trim();
 
         itemData.title = title;
         itemData.fromUnit = fromUnit;
@@ -3200,12 +3297,36 @@ class ImportBatchStore {
             existingDocNumbers.add(docNumber);
         }
 
+        if (deadline !== '') {
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+            let parsedDate = null;
+
+            if (dateRegex.test(deadline) || isoRegex.test(deadline)) {
+                parsedDate = new Date(deadline);
+            } else {
+                errors.push('办理期限格式不正确，应为 YYYY-MM-DD');
+            }
+
+            if (parsedDate !== null) {
+                if (isNaN(parsedDate.getTime())) {
+                    errors.push('办理期限无效');
+                } else {
+                    itemData.deadline = parsedDate.toISOString();
+                }
+            }
+        } else {
+            itemData.deadline = null;
+        }
+
         return {
             valid: errors.length === 0,
             errors: errors,
             data: itemData,
             rowIndex: rowIndex,
-            docId: null
+            docId: null,
+            corrections: itemData.corrections || [],
+            hasCorrected: itemData.hasCorrected || false
         };
     }
 }

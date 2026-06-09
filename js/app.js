@@ -14,6 +14,8 @@ let isArchiveDetail = false;
 
 let currentImportBatchId = null;
 let currentImportFilters = {};
+let editingImportRow = null;
+let currentPreviewTab = 'all';
 
 let currentAttachmentFilters = {};
 
@@ -204,10 +206,14 @@ function navigateTo(page, params = {}) {
             renderBatchImportList();
             break;
         case 'batchImportUpload':
+            editingImportRow = null;
+            currentPreviewTab = 'all';
             renderBatchImportUpload();
             break;
         case 'batchImportPreview':
             currentImportBatchId = params.batchId;
+            editingImportRow = null;
+            currentPreviewTab = params.tab || 'all';
             renderBatchImportPreview();
             break;
         case 'batchImportResult':
@@ -4340,6 +4346,7 @@ function renderBatchImportTable() {
                         <th>总数</th>
                         <th>成功</th>
                         <th>失败</th>
+                        <th>修正</th>
                         <th>状态</th>
                         <th>导入时间</th>
                         <th>操作人</th>
@@ -4347,7 +4354,9 @@ function renderBatchImportTable() {
                     </tr>
                 </thead>
                 <tbody>
-                    ${batches.map(batch => `
+                    ${batches.map(batch => {
+                        const correctedCount = batch.items ? batch.items.filter(item => item.hasCorrected).length : 0;
+                        return `
                         <tr>
                             <td><strong>${batch.id}</strong></td>
                             <td>${batch.fileName}</td>
@@ -4355,6 +4364,7 @@ function renderBatchImportTable() {
                             <td>${batch.totalCount}</td>
                             <td style="color:#52c41a;">${batch.successCount}</td>
                             <td style="color:#f5222d;">${batch.failCount}</td>
+                            <td>${correctedCount > 0 ? `<span class="correction-badge">${correctedCount}</span>` : '<span style="color:#999;">0</span>'}</td>
                             <td><span class="import-status-badge status-${batch.status}">${IMPORT_STATUS_LABELS[batch.status]}</span></td>
                             <td>${formatDateTime(batch.createdAt)}</td>
                             <td>${batch.createdByName}</td>
@@ -4366,7 +4376,7 @@ function renderBatchImportTable() {
                                 </div>
                             </td>
                         </tr>
-                    `).join('')}
+                    `}).join('')}
                 </tbody>
             </table>
         </div>
@@ -4413,6 +4423,7 @@ function renderBatchImportUpload() {
                                     <li><code>docNumber</code> - 来文字号</li>
                                     <li><code>docDate</code> - 来文日期 (YYYY-MM-DD)</li>
                                     <li><code>priority</code> - 紧急程度 (普通/加急/特急)</li>
+                                    <li><code>deadline</code> - 办理期限 (YYYY-MM-DD)</li>
                                     <li><code>category</code> - 公文类别</li>
                                     <li><code>content</code> - 内容摘要</li>
                                 </ul>
@@ -4428,6 +4439,7 @@ function renderBatchImportUpload() {
                                     <li><code>docNumber</code> - 来文字号</li>
                                     <li><code>docDate</code> - 来文日期</li>
                                     <li><code>priority</code> - 紧急程度</li>
+                                    <li><code>deadline</code> - 办理期限</li>
                                     <li><code>category</code> - 公文类别</li>
                                     <li><code>content</code> - 内容摘要</li>
                                 </ul>
@@ -4519,6 +4531,10 @@ function parseCSV(text) {
         'docdate': 'docDate',
         'doc_date': 'docDate',
         'priority': 'priority',
+        'deadline': 'deadline',
+        'banliqixian': 'deadline',
+        '办理期限': 'deadline',
+        '期限': 'deadline',
         'category': 'category',
         'content': 'content'
     };
@@ -4601,6 +4617,8 @@ function goToImportPreview() {
     }, currentUser);
 
     currentPreviewBatchId = batch.id;
+    currentPreviewTab = 'all';
+    editingImportRow = null;
     navigateTo('batchImportPreview', { batchId: batch.id });
 }
 
@@ -4615,6 +4633,13 @@ function renderBatchImportPreview() {
 
     const validItems = batch.items.filter(item => item.valid);
     const invalidItems = batch.items.filter(item => !item.valid);
+    const correctedCount = batch.items.filter(item => item.hasCorrected).length;
+    let displayItems = batch.items;
+    if (currentPreviewTab === 'valid') {
+        displayItems = validItems;
+    } else if (currentPreviewTab === 'invalid') {
+        displayItems = invalidItems;
+    }
 
     const content = document.getElementById('contentArea');
 
@@ -4624,7 +4649,7 @@ function renderBatchImportPreview() {
             <button class="btn btn-default" onclick="navigateTo('batchImport')">返回列表</button>
         </div>
 
-        <div class="preview-stats-grid">
+        <div class="preview-stats-grid preview-stats-four">
             <div class="preview-stat-card preview-stat-total">
                 <div class="preview-stat-icon">📊</div>
                 <div class="preview-stat-info">
@@ -4644,6 +4669,13 @@ function renderBatchImportPreview() {
                 <div class="preview-stat-info">
                     <div class="preview-stat-number">${invalidItems.length}</div>
                     <div class="preview-stat-label">校验失败</div>
+                </div>
+            </div>
+            <div class="preview-stat-card preview-stat-corrected">
+                <div class="preview-stat-icon">✏️</div>
+                <div class="preview-stat-info">
+                    <div class="preview-stat-number">${correctedCount}</div>
+                    <div class="preview-stat-label">已修正</div>
                 </div>
             </div>
         </div>
@@ -4678,13 +4710,13 @@ function renderBatchImportPreview() {
             <div class="card-header">
                 <span class="card-title">数据校验结果</span>
                 <div class="preview-tabs">
-                    <span class="preview-tab active" onclick="switchPreviewTab('all', this)">全部 (${batch.totalCount})</span>
-                    <span class="preview-tab" onclick="switchPreviewTab('valid', this)">通过 (${validItems.length})</span>
-                    <span class="preview-tab" onclick="switchPreviewTab('invalid', this)">失败 (${invalidItems.length})</span>
+                    <span class="preview-tab ${currentPreviewTab === 'all' ? 'active' : ''}" onclick="switchPreviewTab('all', this)">全部 (${batch.totalCount})</span>
+                    <span class="preview-tab ${currentPreviewTab === 'valid' ? 'active' : ''}" onclick="switchPreviewTab('valid', this)">通过 (${validItems.length})</span>
+                    <span class="preview-tab ${currentPreviewTab === 'invalid' ? 'active' : ''}" onclick="switchPreviewTab('invalid', this)">失败 (${invalidItems.length})</span>
                 </div>
             </div>
-            <div class="card-body" style="padding:0;">
-                ${renderPreviewTable(batch.items, 'all')}
+            <div class="card-body" style="padding:0;" id="previewTableContainer">
+                ${renderPreviewTable(displayItems, currentPreviewTab)}
             </div>
         </div>
 
@@ -4702,6 +4734,8 @@ function switchPreviewTab(type, tabEl) {
     const batch = importBatchStore.getBatch(batchId);
     if (!batch) return;
 
+    currentPreviewTab = type;
+    editingImportRow = null;
     document.querySelectorAll('.preview-tab').forEach(el => el.classList.remove('active'));
     tabEl.classList.add('active');
 
@@ -4712,7 +4746,7 @@ function switchPreviewTab(type, tabEl) {
         items = batch.items.filter(item => !item.valid);
     }
 
-    const tableContainer = document.querySelector('.card-body[style="padding:0;"]');
+    const tableContainer = document.getElementById('previewTableContainer');
     if (tableContainer) {
         tableContainer.innerHTML = renderPreviewTable(items, type);
     }
@@ -4721,6 +4755,20 @@ function switchPreviewTab(type, tabEl) {
 function renderPreviewTable(items, type) {
     if (items.length === 0) {
         return '<div class="empty-state"><p>暂无数据</p></div>';
+    }
+
+    function formatDeadline(deadline) {
+        if (!deadline) return '-';
+        const d = new Date(deadline);
+        return isNaN(d.getTime()) ? deadline : d.toISOString().split('T')[0];
+    }
+
+    function renderCorrectionsBadge(item) {
+        if (!item.hasCorrected || !item.corrections || item.corrections.length === 0) return '';
+        const summary = item.corrections
+            .map(c => `${c.fieldLabel}: ${c.oldValue || '(空)'} -> ${c.newValue || '(空)'}`)
+            .join('；');
+        return `<span class="correction-badge" title="${escapeHtml(summary)}">已修正${item.corrections.length}处</span>`;
     }
 
     return `
@@ -4734,33 +4782,204 @@ function renderPreviewTable(items, type) {
                         <th>来文字号</th>
                         <th>来文日期</th>
                         <th>紧急程度</th>
+                        <th>办理期限</th>
                         <th>状态</th>
-                        <th>错误信息</th>
+                        <th>错误信息/修正记录</th>
+                        <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${items.map(item => `
-                        <tr class="${item.valid ? 'row-valid' : 'row-invalid'}">
+                    ${items.map(item => {
+                        const isEditing = editingImportRow === item.rowIndex;
+                        const deadlineForInput = item.data.deadline ? formatDeadline(item.data.deadline) : '';
+                        if (isEditing) {
+                            return `
+                        <tr class="row-editing">
                             <td>${item.rowIndex}</td>
-                            <td class="td-ellipsis" title="${item.data.title || ''}">${item.data.title || '-'}</td>
-                            <td>${item.data.fromUnit || '-'}</td>
-                            <td>${item.data.docNumber || '-'}</td>
+                            <td><input type="text" class="form-input form-input-sm edit-input edit-title" data-field="title" value="${escapeHtml(item.data.title || '')}"></td>
+                            <td><input type="text" class="form-input form-input-sm edit-input edit-fromUnit" data-field="fromUnit" value="${escapeHtml(item.data.fromUnit || '')}"></td>
+                            <td><input type="text" class="form-input form-input-sm edit-input" data-field="docNumber" value="${escapeHtml(item.data.docNumber || '')}"></td>
                             <td>${item.data.docDate || '-'}</td>
-                            <td>${item.data.priority ? getPriorityLabel(item.data.priority) : '-'}</td>
+                            <td>
+                                <select class="form-select form-select-sm edit-input" data-field="priority">
+                                    <option value="">请选择</option>
+                                    <option value="normal" ${item.data.priority === 'normal' ? 'selected' : ''}>普通</option>
+                                    <option value="high" ${item.data.priority === 'high' ? 'selected' : ''}>加急</option>
+                                    <option value="urgent" ${item.data.priority === 'urgent' ? 'selected' : ''}>特急</option>
+                                </select>
+                            </td>
+                            <td><input type="date" class="form-input form-input-sm edit-input" data-field="deadline" value="${deadlineForInput}"></td>
                             <td>
                                 <span class="valid-badge ${item.valid ? 'valid' : 'invalid'}">
                                     ${item.valid ? '✓ 通过' : '✗ 失败'}
                                 </span>
                             </td>
                             <td class="error-cell">
-                                ${item.valid ? '-' : item.errors.join('；')}
+                                ${item.valid ? (renderCorrectionsBadge(item) || '-') : `<div>${item.errors.join('；')}</div>${renderCorrectionsBadge(item)}`}
+                            </td>
+                            <td>
+                                <div class="row-edit-actions">
+                                    <button class="btn btn-primary btn-xs" onclick="saveRowEdit(${item.rowIndex})">保存校验</button>
+                                    <button class="btn btn-default btn-xs" onclick="cancelRowEdit()">取消</button>
+                                </div>
                             </td>
                         </tr>
-                    `).join('')}
+                            `;
+                        }
+                        return `
+                        <tr class="${item.valid ? 'row-valid' : 'row-invalid'} ${item.hasCorrected ? 'row-corrected' : ''}">
+                            <td>${item.rowIndex}</td>
+                            <td class="td-ellipsis" title="${escapeHtml(item.data.title || '')}">${escapeHtml(item.data.title || '-')}</td>
+                            <td>${escapeHtml(item.data.fromUnit || '-')}</td>
+                            <td>${escapeHtml(item.data.docNumber || '-')}</td>
+                            <td>${item.data.docDate || '-'}</td>
+                            <td>${item.data.priority ? getPriorityLabel(item.data.priority) : '-'}</td>
+                            <td>${formatDeadline(item.data.deadline)}</td>
+                            <td>
+                                <span class="valid-badge ${item.valid ? 'valid' : 'invalid'}">
+                                    ${item.valid ? '✓ 通过' : '✗ 失败'}
+                                </span>
+                            </td>
+                            <td class="error-cell">
+                                ${item.valid ? (renderCorrectionsBadge(item) || '-') : `<div>${item.errors.join('；')}</div>${renderCorrectionsBadge(item)}`}
+                            </td>
+                            <td>
+                                <div class="row-actions">
+                                    <button class="btn btn-default btn-xs" onclick="startRowEdit(${item.rowIndex})">编辑</button>
+                                    ${!item.valid ? `<button class="btn btn-default btn-xs" onclick="revalidateRow(${item.rowIndex})">重校验</button>` : ''}
+                                </div>
+                            </td>
+                        </tr>
+                        `;
+                    }).join('')}
                 </tbody>
             </table>
         </div>
     `;
+}
+
+function startRowEdit(rowIndex) {
+    if (editingImportRow !== null) {
+        showToast('请先保存或取消当前行编辑', 'warning');
+        return;
+    }
+    editingImportRow = rowIndex;
+    refreshPreviewTable();
+}
+
+function cancelRowEdit() {
+    editingImportRow = null;
+    refreshPreviewTable();
+}
+
+function saveRowEdit(rowIndex) {
+    const batchId = currentImportBatchId || currentPreviewBatchId;
+    if (!importBatchStore.getBatch(batchId)) return;
+
+    const newData = {};
+    document.querySelectorAll('.edit-input').forEach(input => {
+        const field = input.dataset.field;
+        let value = input.value;
+        if (field === 'deadline') {
+            value = value ? new Date(value).toISOString() : null;
+        } else {
+            value = value ? value.trim() : '';
+        }
+        newData[field] = value;
+    });
+
+    const titleInput = document.querySelector('.edit-title');
+    if (titleInput && !titleInput.value.trim()) {
+        showToast('标题不能为空', 'warning');
+        titleInput.focus();
+        return;
+    }
+    const fromUnitInput = document.querySelector('.edit-fromUnit');
+    if (fromUnitInput && !fromUnitInput.value.trim()) {
+        showToast('来文单位不能为空', 'warning');
+        fromUnitInput.focus();
+        return;
+    }
+
+    const updateResult = importBatchStore.updateBatchItem(batchId, rowIndex, newData);
+    if (!updateResult) {
+        showToast('保存失败', 'error');
+        return;
+    }
+
+    const item = importBatchStore.revalidateItem(batchId, rowIndex);
+    if (!item) {
+        showToast('校验失败', 'error');
+        return;
+    }
+
+    editingImportRow = null;
+    if (item.valid) {
+        const count = updateResult.corrections.length;
+        showToast(count > 0 ? `已保存并通过校验，修正${count}处` : '已保存并通过校验');
+    } else {
+        showToast(`保存成功，但仍有问题：${item.errors.join('；')}`, 'warning');
+    }
+    refreshPreviewPage();
+}
+
+function revalidateRow(rowIndex) {
+    const batchId = currentImportBatchId || currentPreviewBatchId;
+    const item = importBatchStore.revalidateItem(batchId, rowIndex);
+    if (!item) {
+        showToast('校验失败', 'error');
+        return;
+    }
+    showToast(item.valid ? '校验通过' : `校验失败：${item.errors.join('；')}`, item.valid ? 'success' : 'warning');
+    refreshPreviewPage();
+}
+
+function refreshPreviewPage() {
+    const batchId = currentImportBatchId || currentPreviewBatchId;
+    const batch = importBatchStore.getBatch(batchId);
+    if (!batch) return;
+
+    const validItems = batch.items.filter(item => item.valid);
+    const invalidItems = batch.items.filter(item => !item.valid);
+    const correctedCount = batch.items.filter(item => item.hasCorrected).length;
+
+    const statNumbers = document.querySelectorAll('.preview-stat-number');
+    if (statNumbers.length >= 4) {
+        statNumbers[0].textContent = batch.totalCount;
+        statNumbers[1].textContent = validItems.length;
+        statNumbers[2].textContent = invalidItems.length;
+        statNumbers[3].textContent = correctedCount;
+    }
+
+    const tabs = document.querySelectorAll('.preview-tab');
+    tabs.forEach(tab => {
+        if (tab.textContent.startsWith('全部')) tab.textContent = `全部 (${batch.totalCount})`;
+        if (tab.textContent.startsWith('通过')) tab.textContent = `通过 (${validItems.length})`;
+        if (tab.textContent.startsWith('失败')) tab.textContent = `失败 (${invalidItems.length})`;
+    });
+
+    const confirmBtn = document.querySelector('.btn-primary.btn-lg');
+    if (confirmBtn) {
+        confirmBtn.textContent = `确认导入 (${validItems.length} 条)`;
+        confirmBtn.disabled = validItems.length === 0;
+    }
+
+    refreshPreviewTable();
+}
+
+function refreshPreviewTable() {
+    const batchId = currentImportBatchId || currentPreviewBatchId;
+    const batch = importBatchStore.getBatch(batchId);
+    const container = document.getElementById('previewTableContainer');
+    if (!batch || !container) return;
+
+    let items = batch.items;
+    if (currentPreviewTab === 'valid') {
+        items = batch.items.filter(item => item.valid);
+    } else if (currentPreviewTab === 'invalid') {
+        items = batch.items.filter(item => !item.valid);
+    }
+    container.innerHTML = renderPreviewTable(items, currentPreviewTab);
 }
 
 function confirmImportBatch() {
@@ -4799,8 +5018,33 @@ function renderBatchImportResult() {
 
     const successItems = batch.items.filter(item => item.docId);
     const failItems = batch.items.filter(item => !item.valid || !item.docId);
+    const correctedItems = batch.items.filter(item => item.hasCorrected && item.corrections && item.corrections.length > 0);
+    const hasImportFailures = failItems.length > 0;
 
     const content = document.getElementById('contentArea');
+
+    function formatDeadline(deadline) {
+        if (!deadline) return '-';
+        const d = new Date(deadline);
+        return isNaN(d.getTime()) ? deadline : d.toISOString().split('T')[0];
+    }
+
+    function renderCorrectionList(item) {
+        if (!item.corrections || item.corrections.length === 0) return '';
+        return `
+            <div class="correction-list">
+                <div class="correction-title">修正记录：</div>
+                ${item.corrections.map(c => `
+                    <div class="correction-item">
+                        <span class="correction-field">${c.fieldLabel}</span>：
+                        <span class="correction-old">${escapeHtml(c.oldValue || '(空)')}</span>
+                        <span class="correction-arrow">-></span>
+                        <span class="correction-new">${escapeHtml(c.newValue || '(空)')}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
 
     content.innerHTML = `
         <div class="page-header">
@@ -4808,21 +5052,21 @@ function renderBatchImportResult() {
             <button class="btn btn-default" onclick="navigateTo('batchImport')">返回列表</button>
         </div>
 
-        <div class="result-summary-card ${batch.status === IMPORT_STATUS.FAILED ? 'result-failed' : 'result-success'}">
+        <div class="result-summary-card ${hasImportFailures ? 'result-failed' : 'result-success'}">
             <div class="result-icon">
-                ${batch.status === IMPORT_STATUS.FAILED ? '❌' : '✅'}
+                ${hasImportFailures ? '❌' : '✅'}
             </div>
             <div class="result-info">
                 <div class="result-title">
-                    ${batch.status === IMPORT_STATUS.FAILED ? '导入失败' : '导入成功'}
+                    ${hasImportFailures ? '导入完成（存在失败记录）' : '导入成功'}
                 </div>
                 <div class="result-desc">
-                    批次号：${batch.id} · 共 ${batch.totalCount} 条记录
+                    批次号：${batch.id} · 共 ${batch.totalCount} 条记录 · 成功 ${batch.successCount} 条 · 失败 ${batch.failCount} 条
                 </div>
             </div>
         </div>
 
-        <div class="preview-stats-grid" style="margin-top:20px;">
+        <div class="preview-stats-grid preview-stats-four" style="margin-top:20px;">
             <div class="preview-stat-card preview-stat-success">
                 <div class="preview-stat-icon">✅</div>
                 <div class="preview-stat-info">
@@ -4835,6 +5079,13 @@ function renderBatchImportResult() {
                 <div class="preview-stat-info">
                     <div class="preview-stat-number">${batch.failCount}</div>
                     <div class="preview-stat-label">导入失败</div>
+                </div>
+            </div>
+            <div class="preview-stat-card preview-stat-corrected">
+                <div class="preview-stat-icon">✏️</div>
+                <div class="preview-stat-info">
+                    <div class="preview-stat-number">${correctedItems.length}</div>
+                    <div class="preview-stat-label">行内修正</div>
                 </div>
             </div>
             <div class="preview-stat-card preview-stat-total">
@@ -4862,17 +5113,21 @@ function renderBatchImportResult() {
                                     <th>标题</th>
                                     <th>来文单位</th>
                                     <th>紧急程度</th>
+                                    <th>办理期限</th>
+                                    <th>修正情况</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${successItems.map(item => `
-                                    <tr>
+                                    <tr class="${item.hasCorrected ? 'row-corrected' : ''}">
                                         <td>${item.rowIndex}</td>
                                         <td><strong>${item.docId}</strong></td>
-                                        <td class="td-ellipsis" title="${item.data.title}">${item.data.title}</td>
-                                        <td>${item.data.fromUnit}</td>
+                                        <td class="td-ellipsis" title="${escapeHtml(item.data.title || '')}">${escapeHtml(item.data.title || '')}</td>
+                                        <td>${escapeHtml(item.data.fromUnit || '')}</td>
                                         <td>${item.data.priority ? getPriorityLabel(item.data.priority) : '-'}</td>
+                                        <td>${formatDeadline(item.data.deadline)}</td>
+                                        <td>${item.hasCorrected ? `<span class="correction-badge">${item.corrections.length}处</span>` : '-'}</td>
                                         <td>
                                             <a class="action-link" onclick="navigateTo('detail', {id: '${item.docId}'})">查看</a>
                                         </td>
@@ -4884,6 +5139,43 @@ function renderBatchImportResult() {
                 ` : '<div class="empty-state"><p>无成功导入记录</p></div>'}
             </div>
         </div>
+
+        ${correctedItems.length > 0 ? `
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">修正记录详情</span>
+                <span class="badge-count" style="background:#fa8c16;">${correctedItems.length} 条</span>
+            </div>
+            <div class="card-body" style="padding:0;">
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style="width:60px;">行号</th>
+                                <th>标题</th>
+                                <th>导入状态</th>
+                                <th>修正内容</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${correctedItems.map(item => `
+                                <tr class="${item.docId ? 'row-corrected' : 'row-invalid'}">
+                                    <td>${item.rowIndex}</td>
+                                    <td class="td-ellipsis" title="${escapeHtml(item.data.title || '')}">${escapeHtml(item.data.title || '-')}</td>
+                                    <td>
+                                        <span class="valid-badge ${item.docId ? 'valid' : 'invalid'}">
+                                            ${item.docId ? '✓ 已导入' : '✗ 未导入'}
+                                        </span>
+                                    </td>
+                                    <td>${renderCorrectionList(item)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        ` : ''}
 
         ${failItems.length > 0 ? `
         <div class="card">
@@ -4900,6 +5192,7 @@ function renderBatchImportResult() {
                                 <th>标题</th>
                                 <th>来文单位</th>
                                 <th>来文字号</th>
+                                <th>修正记录</th>
                                 <th>失败原因</th>
                             </tr>
                         </thead>
@@ -4907,9 +5200,10 @@ function renderBatchImportResult() {
                             ${failItems.map(item => `
                                 <tr class="row-invalid">
                                     <td>${item.rowIndex}</td>
-                                    <td>${item.data.title || '-'}</td>
-                                    <td>${item.data.fromUnit || '-'}</td>
-                                    <td>${item.data.docNumber || '-'}</td>
+                                    <td>${escapeHtml(item.data.title || '-')}</td>
+                                    <td>${escapeHtml(item.data.fromUnit || '-')}</td>
+                                    <td>${escapeHtml(item.data.docNumber || '-')}</td>
+                                    <td>${renderCorrectionList(item) || '-'}</td>
                                     <td class="error-cell">
                                         ${item.errors && item.errors.length > 0 ? item.errors.join('；') : '导入失败'}
                                     </td>

@@ -1936,6 +1936,34 @@ body {
     background: #ffccc7 !important;
 }
 
+.import-preview-table .row-editing {
+    background: #e6f7ff;
+}
+
+.import-preview-table .row-editing:hover {
+    background: #bae7ff !important;
+}
+
+.import-preview-table .row-corrected {
+    background: linear-gradient(90deg, #fffbe6 0%, transparent 100%);
+}
+
+.import-preview-table .row-corrected:hover {
+    background: #fff1b8 !important;
+}
+
+.preview-stats-grid.preview-stats-four {
+    grid-template-columns: repeat(4, 1fr);
+}
+
+.preview-stat-corrected {
+    border-left-color: #fa8c16;
+}
+
+.preview-stat-corrected .preview-stat-icon {
+    background: #fff7e6;
+}
+
 .valid-badge {
     display: inline-block;
     padding: 3px 10px;
@@ -1962,6 +1990,84 @@ body {
     color: #f5222d;
     font-size: 12px;
     max-width: 200px;
+}
+
+.btn-xs {
+    padding: 3px 8px;
+    font-size: 12px;
+    border-radius: 4px;
+}
+
+.row-actions,
+.row-edit-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.form-input-sm,
+.form-select-sm {
+    min-height: 30px;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+.edit-input {
+    width: 100%;
+    min-width: 96px;
+}
+
+.correction-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #fff7e6;
+    color: #d46b08;
+    border: 1px solid #ffd591;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.correction-list {
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: #fffbe6;
+    border: 1px solid #ffe58f;
+    border-radius: 4px;
+}
+
+.correction-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #d46b08;
+    margin-bottom: 4px;
+}
+
+.correction-item {
+    font-size: 12px;
+    color: #666;
+    line-height: 1.6;
+    padding: 2px 0;
+}
+
+.correction-field {
+    font-weight: 500;
+    color: #333;
+}
+
+.correction-old {
+    color: #f5222d;
+    text-decoration: line-through;
+}
+
+.correction-arrow {
+    margin: 0 4px;
+    color: #999;
+}
+
+.correction-new {
+    color: #52c41a;
+    font-weight: 500;
 }
 
 /* 结果汇总卡片 */
